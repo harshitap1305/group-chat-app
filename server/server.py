@@ -13,6 +13,7 @@ FastAPI WebSocket server that handles:
 
 import json
 import asyncio
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -243,9 +244,12 @@ app.mount("/static", StaticFiles(directory=str(CLIENT_DIR)), name="static")
 
 if __name__ == "__main__":
     import uvicorn
+    
+    port = int(os.environ.get("PORT", 8000))
+    
     print("=" * 50)
     print("  Group Chat Server")
-    print("  WebSocket: ws://0.0.0.0:8000/ws")
-    print("  Frontend:  http://0.0.0.0:8000")
+    print(f"  WebSocket: ws://0.0.0.0:{port}/ws")
+    print(f"  Frontend:  http://0.0.0.0:{port}")
     print("=" * 50)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=port)
