@@ -6,10 +6,12 @@
  */
 
 // ── Config ───────────────────────────────────────────────────────
-const WS_PROTOCOL = window.location.protocol === "https:" ? "wss:" : "ws:";
-const BACKEND_PORT = 8000;  // Defined in root .env (BACKEND_PORT)
-const BACKEND_HOST = `${window.location.hostname}:${BACKEND_PORT}`;
-const SERVER_URL = `${WS_PROTOCOL}//${BACKEND_HOST}/ws`;
+const WS_PROTOCOL  = window.location.protocol === "https:" ? "wss:" : "ws:";
+const HTTP_PROTOCOL = window.location.protocol === "https:" ? "https:" : "http:";
+const BACKEND_PORT  = 8000;  // Defined in root .env (BACKEND_PORT)
+const BACKEND_HOST  = `${window.location.hostname}:${BACKEND_PORT}`;
+const SERVER_URL    = `${WS_PROTOCOL}//${BACKEND_HOST}/ws`;
+const UPLOAD_URL    = `${HTTP_PROTOCOL}//${BACKEND_HOST}/upload`;
 // ── Sounds ───────────────────────────────────────────────────────
 const SOUNDS = {
     join: new Audio("/static/sounds/mushroom.mp3"),   // mushroom_mario  — someone joins
@@ -126,6 +128,36 @@ let currentLevel = 1;
 // Receipt tracking — maps client_msg_id → receipt <span> DOM element
 const pendingReceipts = new Map();
 
+// Attachment state
+let attachmentData = null;   // { url, fileName, fileType, fileSize } or null
+let pendingFile    = null;   // File object waiting to be uploaded
+
+function clearPendingAttachment() {
+    attachmentData = null;
+    pendingFile    = null;
+    if (attachmentPreviewBar) attachmentPreviewBar.classList.add("hidden");
+    if (attachmentFilename)   attachmentFilename.textContent = "";
+    if (attachmentFilesize)   attachmentFilesize.textContent = "";
+    if (fileInput)            fileInput.value = "";
+}
+
+function formatBytes(bytes) {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
+
+function getFileIcon(fileType, fileName) {
+    if (fileType.includes("pdf"))   return "📄";
+    if (fileType.includes("word") || fileName.endsWith(".docx") || fileName.endsWith(".doc")) return "📝";
+    if (fileType.includes("zip") || fileType.includes("rar") || fileType.includes("7z"))   return "🗜️";
+    if (fileType.includes("text") || fileName.endsWith(".txt")) return "🗒️";
+    if (fileType.includes("spreadsheet") || fileName.endsWith(".xlsx") || fileName.endsWith(".csv")) return "📊";
+    return "📁";
+}
+
 // ── DOM ───────────────────────────────────────────────────────────
 const loginScreen = document.getElementById("login-screen");
 const chatScreen = document.getElementById("chat-screen");
@@ -240,7 +272,7 @@ function handleMessage(data) {
         case "message":
             // Own messages are rendered optimistically on send — skip the echo
             if (data.username === currentUsername) break;
-            addChatMessage(data.username, data.text, data.timestamp, data.avatar);
+            addChatMessage(data.username, data.text, data.timestamp, data.avatar, data.attachment);
             hideTypingIndicator(data.username);
             playSound("message");
             if (!isTabFocused) playNotificationSound();
@@ -364,7 +396,7 @@ function addChatMessage(username, text, time, avatarId = "wizard", attachment = 
  * with a 😴 receipt emoji. Stores a reference in pendingReceipts so
  * the emoji can be upgraded when the server sends a receipt event.
  */
-function addOwnMessageOptimistic(text, msgId) {
+function addOwnMessageOptimistic(text, msgId, attachment = null) {
     const avatarData = getAvatarData(selectedAvatar, currentUsername);
     const el = document.createElement("div");
     el.className = "message own";
@@ -374,6 +406,25 @@ function addOwnMessageOptimistic(text, msgId) {
             <span>${avatarData.icon}</span>
         </div>`;
 
+    // Build attachment HTML (mirrors addChatMessage logic)
+    let attachmentHtml = "";
+    if (attachment && attachment.url) {
+        const fileUrl  = escapeHtml(attachment.url);
+        const fileName = escapeHtml(attachment.fileName || "attachment");
+        const fileType = (attachment.fileType || "").toLowerCase();
+        const fileSize = formatBytes(attachment.fileSize || 0);
+        if (fileType.startsWith("image/")) {
+            attachmentHtml = `<div class="chat-attachment chat-attachment-image"><a href="${fileUrl}" target="_blank"><img src="${fileUrl}" alt="${fileName}"></a></div>`;
+        } else if (fileType.startsWith("video/")) {
+            attachmentHtml = `<div class="chat-attachment chat-attachment-video"><video controls src="${fileUrl}"></video></div>`;
+        } else if (fileType.startsWith("audio/")) {
+            attachmentHtml = `<div class="chat-attachment chat-attachment-audio"><audio controls src="${fileUrl}"></audio></div>`;
+        } else {
+            const icon = getFileIcon(fileType, fileName);
+            attachmentHtml = `<div class="chat-attachment"><a href="${fileUrl}" download="${fileName}" class="chat-attachment-file" target="_blank"><span class="file-card-icon">${icon}</span><div class="file-card-details"><span class="file-card-name">${fileName}</span><span class="file-card-size">${fileSize}</span></div><span class="file-card-dl-btn">💾 DOWNLOAD</span></a></div>`;
+        }
+    }
+
     const receiptId = `receipt-${msgId}`;
     el.innerHTML = `
         <div class="message-bubble">
@@ -381,7 +432,8 @@ function addOwnMessageOptimistic(text, msgId) {
                 <span class="message-username">${escapeHtml(currentUsername)}</span>
                 <span class="message-time">${currentTime()}</span>
             </div>
-            <p class="message-text">${escapeHtml(text)}</p>
+            ${text ? `<p class="message-text">${escapeHtml(text)}</p>` : ""}
+            ${attachmentHtml}
             <span class="receipt-icon" id="${receiptId}" title="Sent">😴</span>
         </div>
         ${avatarHtml}
@@ -456,6 +508,7 @@ function showChatScreen() {
     chatScreen.classList.remove("hidden");
     messageInput.focus();
     startSessionTimer();
+    playSound("join");  // play mushroom sound when you yourself join
 }
 
 function scrollToBottom() {
@@ -600,32 +653,29 @@ function currentTime() {
 
 function sendMessage() {
     const text = messageInput.value.trim();
-    if (!text) return;
+    const hasAttachment = typeof attachmentData !== "undefined" && attachmentData !== null;
+    if (!text && !hasAttachment) return;
     if (ws && ws.readyState === WebSocket.OPEN) {
         // Generate a local ID to track this bubble's receipt
         const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        ws.send(JSON.stringify({ type: "message", text, client_msg_id: msgId }));
+        ws.send(JSON.stringify({
+            type: "message",
+            text,
+            client_msg_id: msgId,
+            attachment: attachmentData || null
+        }));
+        playSound("message");  // coin sound for sender too
+        // Snapshot attachment before clearPendingAttachment() nulls it
+        const attachmentSnapshot = attachmentData || null;
         // Render immediately (optimistic) — server echo will be suppressed
-        addOwnMessageOptimistic(text, msgId);
+        addOwnMessageOptimistic(text, msgId, attachmentSnapshot);
         messageInput.value = "";
+        clearPendingAttachment();
         messageInput.focus();
         emojiPicker.classList.remove("open");
         emojiToggleBtn.classList.remove("active");
         incrementMessageCount();
     }
-
-    ws.send(JSON.stringify({
-        type: "message",
-        text,
-        attachment: attachmentData
-    }));
-
-    messageInput.value = "";
-    clearPendingAttachment();
-    messageInput.focus();
-    emojiPicker.classList.remove("open");
-    emojiToggleBtn.classList.remove("active");
-    incrementMessageCount();
 }
 
 function playNotificationSound() {
@@ -717,12 +767,35 @@ document.getElementById("emoji-grid").addEventListener("click", (e) => {
 if (attachmentToggleBtn && fileInput) {
     attachmentToggleBtn.addEventListener("click", () => fileInput.click());
 
-    fileInput.addEventListener("change", () => {
-        if (fileInput.files && fileInput.files[0]) {
-            pendingFile = fileInput.files[0];
-            attachmentFilename.textContent = pendingFile.name;
-            attachmentFilesize.textContent = `(${formatBytes(pendingFile.size)})`;
-            attachmentPreviewBar.classList.remove("hidden");
+    fileInput.addEventListener("change", async () => {
+        if (!fileInput.files || !fileInput.files[0]) return;
+        pendingFile = fileInput.files[0];
+
+        // Show preview bar immediately with uploading state
+        attachmentFilename.textContent = pendingFile.name;
+        attachmentFilesize.textContent = "(UPLOADING...)";
+        attachmentPreviewBar.classList.remove("hidden");
+        attachmentData = null;  // clear any previous upload
+
+        // Upload the file to the server
+        try {
+            const formData = new FormData();
+            formData.append("file", pendingFile);
+            const res = await fetch(UPLOAD_URL, { method: "POST", body: formData });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            attachmentData = await res.json();  // { url, fileName, fileType, fileSize }
+            // Absolutize the URL — /uploads/... is served from the backend port,
+            // not the frontend port, so other clients need the full address.
+            if (attachmentData.url && attachmentData.url.startsWith("/")) {
+                attachmentData.url = `${HTTP_PROTOCOL}//${BACKEND_HOST}${attachmentData.url}`;
+            }
+            attachmentFilesize.textContent = `(${formatBytes(attachmentData.fileSize)})`;
+        } catch (err) {
+            console.error("[Upload] failed:", err);
+            attachmentFilename.textContent = "UPLOAD FAILED";
+            attachmentFilesize.textContent = "";
+            attachmentData = null;
+            pendingFile = null;
         }
     });
 
@@ -768,6 +841,7 @@ leaveBtn.addEventListener("click", () => {
 function leaveChat() {
     // Stop session timer
     if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
+    playSound("leave");  // play pipe sound when you yourself leave
     // Close WebSocket
     disconnect();
     // Reset gamification state

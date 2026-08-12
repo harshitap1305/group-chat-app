@@ -267,6 +267,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if msg_type == "message":
                 text = data.get("text", "").strip()
+                client_msg_id = data.get("client_msg_id", "")
                 attachment = data.get("attachment")  # dict: { url, fileName, fileType, fileSize }
                 if text or attachment:
                     msg = {
