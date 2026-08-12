@@ -824,6 +824,165 @@ body {
 
 .hdr-right { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
 
+/* ── ⓘ Info button ───────────────────────────────────────────── */
+.hdr-icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    background: var(--bg3);
+    border: 2px solid var(--bg5);
+    box-shadow: 2px 2px 0 var(--bg0);
+    font-size: 14px;
+    color: var(--sage);
+    cursor: pointer;
+    transition: var(--transition);
+    flex-shrink: 0;
+    font-family: sans-serif;
+    font-weight: bold;
+}
+
+.hdr-icon-btn:hover {
+    background: var(--bg4);
+    border-color: var(--sage);
+    color: var(--cream);
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0 var(--bg0);
+}
+
+/* ── ✕ Leave button ──────────────────────────────────────────── */
+.hdr-leave-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    background: var(--crimson-dk);
+    border: 2px solid var(--crimson);
+    box-shadow: 2px 2px 0 var(--bg0);
+    font-size: 7px;
+    font-family: var(--font-pixel);
+    color: var(--cream);
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: var(--transition);
+    flex-shrink: 0;
+}
+
+.hdr-leave-btn:hover {
+    background: var(--crimson);
+    border-color: var(--cream);
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0 var(--bg0);
+}
+
+/* ── Info modal overlay ──────────────────────────────────────── */
+.info-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: msgAppear 0.1s steps(2);
+}
+
+.info-modal-overlay.hidden { display: none; }
+
+.info-modal {
+    background: var(--bg2);
+    border: 4px solid var(--sage);
+    box-shadow:
+        inset 3px 3px 0 rgba(255,255,255,0.05),
+        10px 10px 0 var(--bg0),
+        0 0 0 2px var(--sage-dk);
+    padding: 20px 24px;
+    min-width: 300px;
+    max-width: 420px;
+    width: 90%;
+}
+
+.info-modal-title {
+    font-size: 9px;
+    color: var(--sage);
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+}
+
+.info-modal-divider {
+    height: 2px;
+    background: var(--bg5);
+    margin-bottom: 16px;
+}
+
+.info-modal-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-bottom: 20px;
+}
+
+.info-modal-list li {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 12px;
+    background: var(--bg1);
+    border: 2px solid var(--bg4);
+    box-shadow: 2px 2px 0 var(--bg0);
+}
+
+.info-emoji {
+    font-size: 28px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.info-desc {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.info-label {
+    font-size: 8px;
+    color: var(--cream);
+    letter-spacing: 2px;
+    font-family: var(--font-pixel);
+}
+
+.info-sub {
+    font-size: 16px;
+    color: var(--t-muted);
+    font-family: var(--font-readable);
+    line-height: 1.3;
+}
+
+.info-modal-close {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    background: var(--bg3);
+    border: 2px solid var(--bg5);
+    box-shadow: 2px 2px 0 var(--bg0);
+    font-size: 8px;
+    font-family: var(--font-pixel);
+    color: var(--t-ivory);
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.info-modal-close:hover {
+    background: var(--bg4);
+    border-color: var(--sage);
+    color: var(--cream);
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0 var(--bg0);
+}
+
 .connection-status {
     display: flex;
     align-items: center;
@@ -969,6 +1128,37 @@ body {
 .message.own .message-text     { color: var(--cream); }
 .message.own .message-time     { color: rgba(255,247,235,0.4); }
 .message.own .message-meta     { justify-content: flex-end; }
+
+/* ── Message receipt emoji ───────────────────────────────────── */
+.receipt-icon {
+    display: block;
+    text-align: right;
+    font-size: 20px;
+    margin-top: 4px;
+    line-height: 1;
+    opacity: 0.55;
+    transition: opacity 0.2s steps(3), transform 0.15s steps(3);
+    cursor: default;
+    user-select: none;
+}
+
+/* Partial delivery — some players got it */
+.receipt-icon.receipt-partial {
+    opacity: 0.85;
+    animation: receiptPop 0.2s steps(3);
+}
+
+/* Full delivery — all players got it */
+.receipt-icon.receipt-delivered {
+    opacity: 1;
+    animation: receiptPop 0.2s steps(3);
+}
+
+@keyframes receiptPop {
+    0%   { transform: scale(0.6); }
+    60%  { transform: scale(1.3); }
+    100% { transform: scale(1.0); }
+}
 
 /* Other messages (left) */
 .message.other { align-self: flex-start; }

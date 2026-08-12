@@ -163,10 +163,12 @@
                         </div>
                     </div>
                     <div class="hdr-right">
+                        <button class="hdr-icon-btn" id="info-btn" title="Receipt emoji guide">ⓘ</button>
                         <div class="connection-status" id="connection-status">
                             <span class="status-dot connected" id="status-dot"></span>
                             <span class="status-text" id="status-text">ONLINE</span>
                         </div>
+                        <button class="hdr-leave-btn" id="leave-btn" title="Leave the chat">✕ LEAVE</button>
                     </div>
                 </header>
 
@@ -236,6 +238,38 @@
         <div class="levelup-box">
             <div class="levelup-line1">★ LEVEL UP! ★</div>
             <div class="levelup-line2" id="levelup-sub">NEW RANK UNLOCKED</div>
+        </div>
+    </div>
+
+    <!-- Receipt emoji info modal -->
+    <div class="info-modal-overlay hidden" id="info-modal-overlay">
+        <div class="info-modal">
+            <div class="info-modal-title">▸ MESSAGE RECEIPTS</div>
+            <div class="info-modal-divider"></div>
+            <ul class="info-modal-list">
+                <li>
+                    <span class="info-emoji">😴</span>
+                    <div class="info-desc">
+                        <span class="info-label">SENT</span>
+                        <span class="info-sub">Message reached the server. No other players online.</span>
+                    </div>
+                </li>
+                <li>
+                    <span class="info-emoji">😃</span>
+                    <div class="info-desc">
+                        <span class="info-label">PARTIAL</span>
+                        <span class="info-sub">Some players received it, but not all.</span>
+                    </div>
+                </li>
+                <li>
+                    <span class="info-emoji">😎</span>
+                    <div class="info-desc">
+                        <span class="info-label">DELIVERED</span>
+                        <span class="info-sub">All players in the room received your message.</span>
+                    </div>
+                </li>
+            </ul>
+            <button class="info-modal-close" id="info-modal-close">[ CLOSE ]</button>
         </div>
     </div>
 

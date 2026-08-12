@@ -76,22 +76,27 @@ class ConnectionManager:
             info["username"].lower() for info in self.active_connections.values()
         ]
 
-    async def broadcast(self, message: dict, exclude: WebSocket | None = None):
-        """Send a JSON message to all connected clients (optionally excluding one)."""
+    async def broadcast(self, message: dict, exclude: WebSocket | None = None) -> int:
+        """Send a JSON message to all connected clients (optionally excluding one).
+        Returns the number of clients the message was successfully delivered to."""
         disconnected = []
+        delivered = 0
         for ws in self.active_connections:
             if ws != exclude:
                 try:
                     await ws.send_json(message)
+                    delivered += 1
                 except Exception:
                     disconnected.append(ws)
         # Clean up any broken connections
         for ws in disconnected:
             self.active_connections.pop(ws, None)
+        return delivered
 
-    async def send_to_all(self, message: dict):
-        """Send a JSON message to ALL connected clients (no exclusions)."""
-        await self.broadcast(message, exclude=None)
+    async def send_to_all(self, message: dict) -> int:
+        """Send a JSON message to ALL connected clients (no exclusions).
+        Returns the number of clients successfully reached."""
+        return await self.broadcast(message, exclude=None)
 
     def add_to_history(self, message: dict):
         """Store a message in the history buffer (capped at MAX_HISTORY)."""
@@ -136,7 +141,7 @@ manager = ConnectionManager()
 FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 5000))
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[f"http://localhost:{FRONTEND_PORT}", f"http://127.0.0.1:{FRONTEND_PORT}"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -231,6 +236,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if msg_type == "message":
                 text = data.get("text", "").strip()
+                client_msg_id = data.get("client_msg_id", "")
                 if text:
                     msg = {
                         "type": "message",
@@ -241,7 +247,25 @@ async def websocket_endpoint(websocket: WebSocket):
                     }
                     # Store in history and broadcast to ALL
                     manager.add_to_history(msg)
-                    await manager.send_to_all(msg)
+                    delivered = await manager.send_to_all(msg)
+
+                    # Determine receipt status and send back to sender only
+                    # delivered includes the sender themselves, so subtract 1
+                    others_reached = delivered - 1   # exclude sender's own copy
+                    total_others   = len(manager.active_connections) - 1
+
+                    if total_others <= 0:
+                        receipt_status = "sent"           # alone in room
+                    elif others_reached >= total_others:
+                        receipt_status = "delivered_all"  # everyone got it
+                    else:
+                        receipt_status = "partial"        # some missed it
+
+                    await websocket.send_json({
+                        "type": "receipt",
+                        "msg_id": client_msg_id,
+                        "status": receipt_status
+                    })
 
             elif msg_type == "typing":
                 # Relay typing indicator to all OTHER users

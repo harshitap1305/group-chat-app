@@ -123,6 +123,9 @@ let sessionStart = null;
 let sessionTimer = null;
 let currentLevel = 1;
 
+// Receipt tracking — maps client_msg_id → receipt <span> DOM element
+const pendingReceipts = new Map();
+
 // ── DOM ───────────────────────────────────────────────────────────
 const loginScreen     = document.getElementById("login-screen");
 const chatScreen      = document.getElementById("chat-screen");
@@ -152,6 +155,12 @@ const streakEl        = document.getElementById("streak-count");
 const sessionTimeEl   = document.getElementById("session-time-stat");
 const levelupToast    = document.getElementById("levelup-toast");
 const levelupSub      = document.getElementById("levelup-sub");
+
+// Info modal + leave button
+const infoBtn          = document.getElementById("info-btn");
+const leaveBtn         = document.getElementById("leave-btn");
+const infoModalOverlay = document.getElementById("info-modal-overlay");
+const infoModalClose   = document.getElementById("info-modal-close");
 
 // ══════════════════════════════════════════════════════════════════
 //  WEBSOCKET
@@ -193,6 +202,7 @@ function disconnect() {
     isIntentionalClose = true;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     if (ws) ws.close();
+    pendingReceipts.clear();
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -222,10 +232,16 @@ function handleMessage(data) {
             break;
 
         case "message":
+            // Own messages are rendered optimistically on send — skip the echo
+            if (data.username === currentUsername) break;
             addChatMessage(data.username, data.text, data.timestamp, data.avatar);
             hideTypingIndicator(data.username);
             playSound("message");
-            if (data.username !== currentUsername && !isTabFocused) playNotificationSound();
+            if (!isTabFocused) playNotificationSound();
+            break;
+
+        case "receipt":
+            updateReceipt(data.msg_id, data.status);
             break;
 
         case "userList":
@@ -294,6 +310,60 @@ function addChatMessage(username, text, time, avatarId = "wizard") {
     `;
     messagesScroll.appendChild(el);
     scrollToBottom();
+}
+
+/**
+ * Render the sender's own message immediately (before server echo),
+ * with a 😴 receipt emoji. Stores a reference in pendingReceipts so
+ * the emoji can be upgraded when the server sends a receipt event.
+ */
+function addOwnMessageOptimistic(text, msgId) {
+    const avatarData = getAvatarData(selectedAvatar, currentUsername);
+    const el = document.createElement("div");
+    el.className = "message own";
+
+    const avatarHtml = `
+        <div class="chat-msg-avatar" style="background:${avatarData.bg}; border-color:${avatarData.border}" title="${escapeHtml(avatarData.name)}">
+            <span>${avatarData.icon}</span>
+        </div>`;
+
+    const receiptId = `receipt-${msgId}`;
+    el.innerHTML = `
+        <div class="message-bubble">
+            <div class="message-meta">
+                <span class="message-username">${escapeHtml(currentUsername)}</span>
+                <span class="message-time">${currentTime()}</span>
+            </div>
+            <p class="message-text">${escapeHtml(text)}</p>
+            <span class="receipt-icon" id="${receiptId}" title="Sent">😴</span>
+        </div>
+        ${avatarHtml}
+    `;
+    messagesScroll.appendChild(el);
+    scrollToBottom();
+    pendingReceipts.set(msgId, document.getElementById(receiptId));
+}
+
+/**
+ * Upgrade the receipt emoji on a sent bubble based on server confirmation.
+ *   sent          → 😴  (no other users online)
+ *   partial       → 😃  (some users received it)
+ *   delivered_all → 😎  (all users received it)
+ */
+function updateReceipt(msgId, status) {
+    const el = pendingReceipts.get(msgId);
+    if (!el) return;
+    if (status === "partial") {
+        el.textContent = "😃";
+        el.title = "Delivered to some";
+        el.classList.add("receipt-partial");
+    } else if (status === "delivered_all") {
+        el.textContent = "😎";
+        el.title = "Delivered to all";
+        el.classList.add("receipt-delivered");
+    }
+    // "sent" keeps 😴 — no change needed
+    pendingReceipts.delete(msgId);
 }
 
 function updateUserList(users) {
@@ -476,11 +546,20 @@ function getAvatarColor(username) {
     return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
+/** Returns the current wall-clock time as HH:MM:SS (matches server format). */
+function currentTime() {
+    return new Date().toLocaleTimeString("en-GB"); // 24h HH:MM:SS
+}
+
 function sendMessage() {
     const text = messageInput.value.trim();
     if (!text) return;
     if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "message", text }));
+        // Generate a local ID to track this bubble's receipt
+        const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        ws.send(JSON.stringify({ type: "message", text, client_msg_id: msgId }));
+        // Render immediately (optimistic) — server echo will be suppressed
+        addOwnMessageOptimistic(text, msgId);
         messageInput.value = "";
         messageInput.focus();
         emojiPicker.classList.remove("open");
@@ -584,6 +663,60 @@ document.addEventListener("click", (e) => {
 
 window.addEventListener("focus", () => { isTabFocused = true; });
 window.addEventListener("blur",  () => { isTabFocused = false; });
+
+// ── Info modal ────────────────────────────────────────────────
+infoBtn.addEventListener("click", () => {
+    infoModalOverlay.classList.remove("hidden");
+});
+
+infoModalClose.addEventListener("click", () => {
+    infoModalOverlay.classList.add("hidden");
+});
+
+// Close on backdrop click
+infoModalOverlay.addEventListener("click", (e) => {
+    if (e.target === infoModalOverlay) infoModalOverlay.classList.add("hidden");
+});
+
+// Close on Escape key
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") infoModalOverlay.classList.add("hidden");
+});
+
+// ── Leave button ──────────────────────────────────────────────
+leaveBtn.addEventListener("click", () => {
+    leaveChat();
+});
+
+function leaveChat() {
+    // Stop session timer
+    if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
+    // Close WebSocket
+    disconnect();
+    // Reset gamification state
+    totalXP = 0; streakCount = 0; messagesSent = 0; currentLevel = 1;
+    if (xpBarFill)    xpBarFill.style.width = "0%";
+    if (xpValue)      xpValue.textContent   = "0/50";
+    if (rankNameEl)   rankNameEl.textContent = "NEWBIE";
+    if (msgCountEl)   msgCountEl.textContent = "0";
+    if (streakEl)     streakEl.textContent   = "0";
+    if (sessionTimeEl) sessionTimeEl.textContent = "0M";
+    // Clear chat messages
+    messagesScroll.innerHTML = "";
+    // Reset username & flags
+    currentUsername = "";
+    isJoined = false;
+    isIntentionalClose = false;
+    // Re-enable join button
+    joinBtn.disabled = false;
+    joinBtnText.textContent = "► START QUEST";
+    loginError.textContent = "";
+    // Flip screens
+    chatScreen.classList.add("hidden");
+    loginScreen.classList.remove("hidden");
+    usernameInput.value = "";
+    usernameInput.focus();
+}
 
 window.addEventListener("load", () => {
     usernameInput.focus();
