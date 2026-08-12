@@ -13,6 +13,8 @@ FastAPI WebSocket server that handles:
 import json
 import asyncio
 import os
+import uuid
+import shutil
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -20,8 +22,9 @@ from dotenv import load_dotenv
 # Load environment variables from .env at project root
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +140,11 @@ class ConnectionManager:
 app = FastAPI(title="Group Chat Server")
 manager = ConnectionManager()
 
+# Uploads directory setup
+UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+
 # Allow requests from the frontend dev server
 FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 5000))
 app.add_middleware(
@@ -146,6 +154,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Handle file upload and return attachment metadata."""
+    try:
+        ext = Path(file.filename).suffix if file.filename else ""
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        file_path = UPLOAD_DIR / unique_name
+
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        file_size = file_path.stat().st_size
+
+        return {
+            "url": f"/uploads/{unique_name}",
+            "fileName": file.filename or "file",
+            "fileType": file.content_type or "application/octet-stream",
+            "fileSize": file_size
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
 
 
 def timestamp() -> str:
@@ -236,13 +267,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if msg_type == "message":
                 text = data.get("text", "").strip()
-                client_msg_id = data.get("client_msg_id", "")
-                if text:
+                attachment = data.get("attachment")  # dict: { url, fileName, fileType, fileSize }
+                if text or attachment:
                     msg = {
                         "type": "message",
                         "username": username,
                         "avatar": avatar,
                         "text": text,
+                        "attachment": attachment,
                         "timestamp": timestamp()
                     }
                     # Store in history and broadcast to ALL

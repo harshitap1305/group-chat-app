@@ -6,15 +6,15 @@
  */
 
 // ── Config ───────────────────────────────────────────────────────
-const WS_PROTOCOL         = window.location.protocol === "https:" ? "wss:" : "ws:";
-const BACKEND_PORT        = 8000;  // Defined in root .env (BACKEND_PORT)
-const BACKEND_HOST        = `${window.location.hostname}:${BACKEND_PORT}`;
-const SERVER_URL          = `${WS_PROTOCOL}//${BACKEND_HOST}/ws`;
+const WS_PROTOCOL = window.location.protocol === "https:" ? "wss:" : "ws:";
+const BACKEND_PORT = 8000;  // Defined in root .env (BACKEND_PORT)
+const BACKEND_HOST = `${window.location.hostname}:${BACKEND_PORT}`;
+const SERVER_URL = `${WS_PROTOCOL}//${BACKEND_HOST}/ws`;
 // ── Sounds ───────────────────────────────────────────────────────
 const SOUNDS = {
-    join:    new Audio("/static/sounds/mushroom.mp3"),   // mushroom_mario  — someone joins
+    join: new Audio("/static/sounds/mushroom.mp3"),   // mushroom_mario  — someone joins
     message: new Audio("/static/sounds/coin.mp3"),       // mario_coin      — new message
-    leave:   new Audio("/static/sounds/pipe.mp3"),       // mario_bros_pipe — someone leaves
+    leave: new Audio("/static/sounds/pipe.mp3"),       // mario_bros_pipe — someone leaves
 };
 // Pre-load clips so first play is instant
 Object.values(SOUNDS).forEach(a => { a.preload = "auto"; a.volume = 0.5; });
@@ -23,11 +23,11 @@ function playSound(name) {
     const clip = SOUNDS[name];
     if (!clip) return;
     clip.currentTime = 0;
-    clip.play().catch(() => {});   // silently ignore if browser blocks autoplay
+    clip.play().catch(() => { });   // silently ignore if browser blocks autoplay
 }
 
 const RECONNECT_BASE_DELAY = 1000;
-const RECONNECT_MAX_DELAY  = 10000;
+const RECONNECT_MAX_DELAY = 10000;
 
 // Avatar bg colors — all derived from #778873 / #A1BC98 palette
 const AVATAR_COLORS = [
@@ -38,18 +38,18 @@ const AVATAR_COLORS = [
 
 // Predefined Avatars (Google Profile / Retro Badges)
 const AVATARS = [
-    { id: "wizard",    name: "WIZARD",    icon: "🧙‍♂️", bg: "#4a6050", border: "#A1BC98" },
-    { id: "robot",     name: "ROBOT",     icon: "🤖", bg: "#384d54", border: "#729fa8" },
-    { id: "ninja",     name: "NINJA",     icon: "🥷", bg: "#2d3330", border: "#586660" },
-    { id: "astronaut", name: "ASTRO",     icon: "👨‍🚀", bg: "#423854", border: "#8f75b8" },
-    { id: "dragon",    name: "DRAGON",    icon: "🐉", bg: "#5c2a2a", border: "#b85c5c" },
-    { id: "hero",      name: "HERO",      icon: "🦸", bg: "#2a425c", border: "#5c8eb8" },
-    { id: "alien",     name: "ALIEN",     icon: "👽", bg: "#2a5c3b", border: "#5cb87d" },
-    { id: "cyber",     name: "CYBER",     icon: "👾", bg: "#542a5c", border: "#b85cb0" },
-    { id: "fox",       name: "FOX",       icon: "🦊", bg: "#5c3d2a", border: "#b87c5c" },
-    { id: "owl",       name: "OWL",       icon: "🦉", bg: "#473f32", border: "#8a7d67" },
-    { id: "bear",      name: "BEAR",      icon: "🐻", bg: "#3b2f28", border: "#786154" },
-    { id: "lion",      name: "LION",      icon: "🦁", bg: "#594924", border: "#ad914e" },
+    { id: "wizard", name: "WIZARD", icon: "🧙‍♂️", bg: "#4a6050", border: "#A1BC98" },
+    { id: "robot", name: "ROBOT", icon: "🤖", bg: "#384d54", border: "#729fa8" },
+    { id: "ninja", name: "NINJA", icon: "🥷", bg: "#2d3330", border: "#586660" },
+    { id: "astronaut", name: "ASTRO", icon: "👨‍🚀", bg: "#423854", border: "#8f75b8" },
+    { id: "dragon", name: "DRAGON", icon: "🐉", bg: "#5c2a2a", border: "#b85c5c" },
+    { id: "hero", name: "HERO", icon: "🦸", bg: "#2a425c", border: "#5c8eb8" },
+    { id: "alien", name: "ALIEN", icon: "👽", bg: "#2a5c3b", border: "#5cb87d" },
+    { id: "cyber", name: "CYBER", icon: "👾", bg: "#542a5c", border: "#b85cb0" },
+    { id: "fox", name: "FOX", icon: "🦊", bg: "#5c3d2a", border: "#b87c5c" },
+    { id: "owl", name: "OWL", icon: "🦉", bg: "#473f32", border: "#8a7d67" },
+    { id: "bear", name: "BEAR", icon: "🐻", bg: "#3b2f28", border: "#786154" },
+    { id: "lion", name: "LION", icon: "🦁", bg: "#594924", border: "#ad914e" },
 ];
 
 let selectedAvatar = "wizard";
@@ -96,28 +96,28 @@ function renderAvatarPicker() {
 
 // Ranks
 const RANKS = [
-    { level: 1, xp: 0,   name: "NEWBIE",    next: 50   },
-    { level: 2, xp: 50,  name: "SQUIRE",    next: 150  },
-    { level: 3, xp: 150, name: "KNIGHT",    next: 320  },
-    { level: 4, xp: 320, name: "CHAMPION",  next: 600  },
-    { level: 5, xp: 600, name: "WARLORD",   next: 1000 },
-    { level: 6, xp: 1000,name: "LEGEND",    next: 1000 },
+    { level: 1, xp: 0, name: "NEWBIE", next: 50 },
+    { level: 2, xp: 50, name: "SQUIRE", next: 150 },
+    { level: 3, xp: 150, name: "KNIGHT", next: 320 },
+    { level: 4, xp: 320, name: "CHAMPION", next: 600 },
+    { level: 5, xp: 600, name: "WARLORD", next: 1000 },
+    { level: 6, xp: 1000, name: "LEGEND", next: 1000 },
 ];
 
 // ── State ─────────────────────────────────────────────────────────
-let ws                 = null;
-let currentUsername    = "";
-let reconnectAttempts  = 0;
-let reconnectTimer     = null;
+let ws = null;
+let currentUsername = "";
+let reconnectAttempts = 0;
+let reconnectTimer = null;
 let isIntentionalClose = false;
-let isJoined           = false;
-let typingTimeout      = null;
-let lastTypingSent     = 0;
-let isTabFocused       = true;
+let isJoined = false;
+let typingTimeout = null;
+let lastTypingSent = 0;
+let isTabFocused = true;
 
 // Gamification
-let totalXP      = 0;
-let streakCount  = 0;
+let totalXP = 0;
+let streakCount = 0;
 let messagesSent = 0;
 let sessionStart = null;
 let sessionTimer = null;
@@ -127,40 +127,46 @@ let currentLevel = 1;
 const pendingReceipts = new Map();
 
 // ── DOM ───────────────────────────────────────────────────────────
-const loginScreen     = document.getElementById("login-screen");
-const chatScreen      = document.getElementById("chat-screen");
-const usernameInput   = document.getElementById("username-input");
-const joinBtn         = document.getElementById("join-btn");
-const joinBtnText     = document.getElementById("join-btn-text");
-const loginError      = document.getElementById("login-error");
-const messagesScroll  = document.getElementById("messages-scroll");
-const messageInput    = document.getElementById("message-input");
-const sendBtn         = document.getElementById("send-btn");
-const userList        = document.getElementById("user-list");
-const headerSubtitle  = document.getElementById("header-subtitle");
+const loginScreen = document.getElementById("login-screen");
+const chatScreen = document.getElementById("chat-screen");
+const usernameInput = document.getElementById("username-input");
+const joinBtn = document.getElementById("join-btn");
+const joinBtnText = document.getElementById("join-btn-text");
+const loginError = document.getElementById("login-error");
+const messagesScroll = document.getElementById("messages-scroll");
+const messageInput = document.getElementById("message-input");
+const sendBtn = document.getElementById("send-btn");
+const userList = document.getElementById("user-list");
+const headerSubtitle = document.getElementById("header-subtitle");
 const typingIndicator = document.getElementById("typing-indicator");
-const typingTextEl    = document.getElementById("typing-text");
-const emojiPicker     = document.getElementById("emoji-picker");
-const emojiToggleBtn  = document.getElementById("emoji-toggle-btn");
-const statusDot       = document.getElementById("status-dot");
-const statusText      = document.getElementById("status-text");
+const typingTextEl = document.getElementById("typing-text");
+const emojiPicker = document.getElementById("emoji-picker");
+const emojiToggleBtn = document.getElementById("emoji-toggle-btn");
+const fileInput = document.getElementById("file-input");
+const attachmentToggleBtn = document.getElementById("attachment-toggle-btn");
+const attachmentPreviewBar = document.getElementById("attachment-preview-bar");
+const attachmentFilename = document.getElementById("attachment-filename");
+const attachmentFilesize = document.getElementById("attachment-filesize");
+const attachmentRemoveBtn = document.getElementById("attachment-remove-btn");
+const statusDot = document.getElementById("status-dot");
+const statusText = document.getElementById("status-text");
 
 // Gamification DOM
-const xpBarFill       = document.getElementById("xp-bar-fill");
-const xpValue         = document.getElementById("xp-value");
-const rankNameEl      = document.getElementById("rank-name");
-const onlineBadge     = document.getElementById("online-count-badge");
-const msgCountEl      = document.getElementById("msg-count-stat");
-const streakEl        = document.getElementById("streak-count");
-const sessionTimeEl   = document.getElementById("session-time-stat");
-const levelupToast    = document.getElementById("levelup-toast");
-const levelupSub      = document.getElementById("levelup-sub");
+const xpBarFill = document.getElementById("xp-bar-fill");
+const xpValue = document.getElementById("xp-value");
+const rankNameEl = document.getElementById("rank-name");
+const onlineBadge = document.getElementById("online-count-badge");
+const msgCountEl = document.getElementById("msg-count-stat");
+const streakEl = document.getElementById("streak-count");
+const sessionTimeEl = document.getElementById("session-time-stat");
+const levelupToast = document.getElementById("levelup-toast");
+const levelupSub = document.getElementById("levelup-sub");
 
 // Info modal + leave button
-const infoBtn          = document.getElementById("info-btn");
-const leaveBtn         = document.getElementById("leave-btn");
+const infoBtn = document.getElementById("info-btn");
+const leaveBtn = document.getElementById("leave-btn");
 const infoModalOverlay = document.getElementById("info-modal-overlay");
-const infoModalClose   = document.getElementById("info-modal-close");
+const infoModalClose = document.getElementById("info-modal-close");
 
 // ══════════════════════════════════════════════════════════════════
 //  WEBSOCKET
@@ -286,7 +292,7 @@ function addSystemMessage(text, time, subtype = "") {
     scrollToBottom();
 }
 
-function addChatMessage(username, text, time, avatarId = "wizard") {
+function addChatMessage(username, text, time, avatarId = "wizard", attachment = null) {
     const isOwn = username === currentUsername;
     const avatarData = getAvatarData(avatarId, username);
     const el = document.createElement("div");
@@ -297,6 +303,46 @@ function addChatMessage(username, text, time, avatarId = "wizard") {
             <span>${avatarData.icon}</span>
         </div>`;
 
+    let attachmentHtml = "";
+    if (attachment && attachment.url) {
+        const fileUrl = escapeHtml(attachment.url);
+        const fileName = escapeHtml(attachment.fileName || "attachment");
+        const fileType = (attachment.fileType || "").toLowerCase();
+        const fileSize = formatBytes(attachment.fileSize || 0);
+
+        if (fileType.startsWith("image/")) {
+            attachmentHtml = `
+                <div class="chat-attachment chat-attachment-image">
+                    <a href="${fileUrl}" target="_blank" title="View Full Image">
+                        <img src="${fileUrl}" alt="${fileName}">
+                    </a>
+                </div>`;
+        } else if (fileType.startsWith("video/")) {
+            attachmentHtml = `
+                <div class="chat-attachment chat-attachment-video">
+                    <video controls src="${fileUrl}"></video>
+                </div>`;
+        } else if (fileType.startsWith("audio/")) {
+            attachmentHtml = `
+                <div class="chat-attachment chat-attachment-audio">
+                    <audio controls src="${fileUrl}"></audio>
+                </div>`;
+        } else {
+            const icon = getFileIcon(fileType, fileName);
+            attachmentHtml = `
+                <div class="chat-attachment">
+                    <a href="${fileUrl}" download="${fileName}" class="chat-attachment-file" target="_blank" title="Download File">
+                        <span class="file-card-icon">${icon}</span>
+                        <div class="file-card-details">
+                            <span class="file-card-name">${fileName}</span>
+                            <span class="file-card-size">${fileSize}</span>
+                        </div>
+                        <span class="file-card-dl-btn">💾 DOWNLOAD</span>
+                    </a>
+                </div>`;
+        }
+    }
+
     el.innerHTML = `
         ${!isOwn ? avatarHtml : ""}
         <div class="message-bubble">
@@ -304,7 +350,8 @@ function addChatMessage(username, text, time, avatarId = "wizard") {
                 <span class="message-username">${escapeHtml(username)}</span>
                 ${time ? `<span class="message-time">${escapeHtml(time)}</span>` : ""}
             </div>
-            <p class="message-text">${escapeHtml(text)}</p>
+            ${text ? `<p class="message-text">${escapeHtml(text)}</p>` : ""}
+            ${attachmentHtml}
         </div>
         ${isOwn ? avatarHtml : ""}
     `;
@@ -424,7 +471,7 @@ function renderHistory(messages) {
     messagesScroll.appendChild(sep);
 
     messages.forEach((msg) => {
-        if (msg.type === "message") addChatMessage(msg.username, msg.text, msg.timestamp, msg.avatar);
+        if (msg.type === "message") addChatMessage(msg.username, msg.text, msg.timestamp, msg.avatar, msg.attachment);
     });
 
     const sep2 = document.createElement("div");
@@ -473,12 +520,12 @@ function gainXP(amount) {
 
 function updateXPBar() {
     const rank = getCurrentRank();
-    const xpInLevel    = totalXP - rank.xp;
-    const xpNeeded     = rank.next - rank.xp;
-    const pct          = rank.level === 6 ? 100 : Math.min(100, (xpInLevel / xpNeeded) * 100);
+    const xpInLevel = totalXP - rank.xp;
+    const xpNeeded = rank.next - rank.xp;
+    const pct = rank.level === 6 ? 100 : Math.min(100, (xpInLevel / xpNeeded) * 100);
 
-    if (xpBarFill)  xpBarFill.style.width = `${pct.toFixed(1)}%`;
-    if (xpValue)    xpValue.textContent   = `${totalXP}/${rank.next}`;
+    if (xpBarFill) xpBarFill.style.width = `${pct.toFixed(1)}%`;
+    if (xpValue) xpValue.textContent = `${totalXP}/${rank.next}`;
     if (rankNameEl) rankNameEl.textContent = rank.name;
 }
 
@@ -566,6 +613,19 @@ function sendMessage() {
         emojiToggleBtn.classList.remove("active");
         incrementMessageCount();
     }
+
+    ws.send(JSON.stringify({
+        type: "message",
+        text,
+        attachment: attachmentData
+    }));
+
+    messageInput.value = "";
+    clearPendingAttachment();
+    messageInput.focus();
+    emojiPicker.classList.remove("open");
+    emojiToggleBtn.classList.remove("active");
+    incrementMessageCount();
 }
 
 function playNotificationSound() {
@@ -581,7 +641,7 @@ function playNotificationSound() {
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
         osc.start(ctx.currentTime);
         osc.stop(ctx.currentTime + 0.3);
-    } catch (e) {}
+    } catch (e) { }
 }
 
 function playLevelUpSound() {
@@ -589,7 +649,7 @@ function playLevelUpSound() {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const notes = [262, 330, 392, 523];  // C4 E4 G4 C5 — 8-bit fanfare
         notes.forEach((freq, i) => {
-            const osc  = ctx.createOscillator();
+            const osc = ctx.createOscillator();
             const gain = ctx.createGain();
             osc.connect(gain);
             gain.connect(ctx.destination);
@@ -601,7 +661,7 @@ function playLevelUpSound() {
             osc.start(t);
             osc.stop(t + 0.12);
         });
-    } catch (e) {}
+    } catch (e) { }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -654,6 +714,23 @@ document.getElementById("emoji-grid").addEventListener("click", (e) => {
     }
 });
 
+if (attachmentToggleBtn && fileInput) {
+    attachmentToggleBtn.addEventListener("click", () => fileInput.click());
+
+    fileInput.addEventListener("change", () => {
+        if (fileInput.files && fileInput.files[0]) {
+            pendingFile = fileInput.files[0];
+            attachmentFilename.textContent = pendingFile.name;
+            attachmentFilesize.textContent = `(${formatBytes(pendingFile.size)})`;
+            attachmentPreviewBar.classList.remove("hidden");
+        }
+    });
+
+    if (attachmentRemoveBtn) {
+        attachmentRemoveBtn.addEventListener("click", clearPendingAttachment);
+    }
+}
+
 document.addEventListener("click", (e) => {
     if (!emojiPicker.contains(e.target) && e.target !== emojiToggleBtn) {
         emojiPicker.classList.remove("open");
@@ -662,7 +739,7 @@ document.addEventListener("click", (e) => {
 });
 
 window.addEventListener("focus", () => { isTabFocused = true; });
-window.addEventListener("blur",  () => { isTabFocused = false; });
+window.addEventListener("blur", () => { isTabFocused = false; });
 
 // ── Info modal ────────────────────────────────────────────────
 infoBtn.addEventListener("click", () => {
@@ -695,11 +772,11 @@ function leaveChat() {
     disconnect();
     // Reset gamification state
     totalXP = 0; streakCount = 0; messagesSent = 0; currentLevel = 1;
-    if (xpBarFill)    xpBarFill.style.width = "0%";
-    if (xpValue)      xpValue.textContent   = "0/50";
-    if (rankNameEl)   rankNameEl.textContent = "NEWBIE";
-    if (msgCountEl)   msgCountEl.textContent = "0";
-    if (streakEl)     streakEl.textContent   = "0";
+    if (xpBarFill) xpBarFill.style.width = "0%";
+    if (xpValue) xpValue.textContent = "0/50";
+    if (rankNameEl) rankNameEl.textContent = "NEWBIE";
+    if (msgCountEl) msgCountEl.textContent = "0";
+    if (streakEl) streakEl.textContent = "0";
     if (sessionTimeEl) sessionTimeEl.textContent = "0M";
     // Clear chat messages
     messagesScroll.innerHTML = "";
