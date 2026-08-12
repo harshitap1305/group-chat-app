@@ -32,8 +32,8 @@ class ConnectionManager:
     """Manages WebSocket connections and message broadcasting."""
 
     def __init__(self):
-        # Maps WebSocket objects to usernames
-        self.active_connections: dict[WebSocket, str] = {}
+        # Maps WebSocket objects to dict with username and avatar
+        self.active_connections: dict[WebSocket, dict] = {}
         # Store last N messages for new joiners
         self.message_history: list[dict] = []
         self.MAX_HISTORY = 50
@@ -41,28 +41,39 @@ class ConnectionManager:
         self._cleanup_timer: asyncio.TimerHandle | None = None
         self.HISTORY_CLEAR_DELAY = 60  # seconds
 
-    def add(self, websocket: WebSocket, username: str):
-        """Register a new connection with a username."""
+    def add(self, websocket: WebSocket, username: str, avatar: str = "avatar-1"):
+        """Register a new connection with a username and avatar."""
         # Someone joined — cancel the pending history-clear if any
         self._cancel_cleanup_timer()
-        self.active_connections[websocket] = username
+        self.active_connections[websocket] = {
+            "username": username,
+            "avatar": avatar
+        }
 
     def remove(self, websocket: WebSocket) -> str | None:
         """Remove a connection and return its username (or None)."""
-        return self.active_connections.pop(websocket, None)
+        info = self.active_connections.pop(websocket, None)
+        return info["username"] if info else None
 
     def get_username(self, websocket: WebSocket) -> str | None:
         """Get the username for a given WebSocket."""
-        return self.active_connections.get(websocket)
+        info = self.active_connections.get(websocket)
+        return info["username"] if info else None
 
-    def get_all_users(self) -> list[str]:
-        """Return a sorted list of all connected usernames."""
-        return sorted(self.active_connections.values())
+    def get_avatar(self, websocket: WebSocket) -> str:
+        """Get the avatar for a given WebSocket."""
+        info = self.active_connections.get(websocket)
+        return info["avatar"] if info else "avatar-1"
+
+    def get_all_users(self) -> list[dict]:
+        """Return a sorted list of all connected user dicts."""
+        users = list(self.active_connections.values())
+        return sorted(users, key=lambda x: x["username"].lower())
 
     def is_username_taken(self, username: str) -> bool:
         """Check if a username is already in use (case-insensitive)."""
         return username.lower() in [
-            u.lower() for u in self.active_connections.values()
+            info["username"].lower() for info in self.active_connections.values()
         ]
 
     async def broadcast(self, message: dict, exclude: WebSocket | None = None):
@@ -160,6 +171,7 @@ async def websocket_endpoint(websocket: WebSocket):
             return
 
         username = data.get("username", "").strip()
+        avatar = data.get("avatar", "avatar-1")
 
         # Validate: non-empty
         if not username:
@@ -180,8 +192,8 @@ async def websocket_endpoint(websocket: WebSocket):
             return
 
         # ── Phase 2: Register the user ──────────────────────────────────
-        manager.add(websocket, username)
-        print(f"[+] {username} joined  |  Online: {len(manager.active_connections)}")
+        manager.add(websocket, username, avatar)
+        print(f"[+] {username} ({avatar}) joined  |  Online: {len(manager.active_connections)}")
 
         # Send welcome to the joiner only
         await websocket.send_json({
@@ -194,6 +206,7 @@ async def websocket_endpoint(websocket: WebSocket):
         await manager.broadcast({
             "type": "join",
             "username": username,
+            "avatar": avatar,
             "message": f"{username} joined the chat",
             "timestamp": timestamp()
         }, exclude=websocket)
@@ -222,6 +235,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     msg = {
                         "type": "message",
                         "username": username,
+                        "avatar": avatar,
                         "text": text,
                         "timestamp": timestamp()
                     }

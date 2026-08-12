@@ -20,6 +20,64 @@ const AVATAR_COLORS = [
     "#667860", "#b0ccb0", "#506858", "#7a9878",
 ];
 
+// Predefined Avatars (Google Profile / Retro Badges)
+const AVATARS = [
+    { id: "wizard",    name: "WIZARD",    icon: "🧙‍♂️", bg: "#4a6050", border: "#A1BC98" },
+    { id: "robot",     name: "ROBOT",     icon: "🤖", bg: "#384d54", border: "#729fa8" },
+    { id: "ninja",     name: "NINJA",     icon: "🥷", bg: "#2d3330", border: "#586660" },
+    { id: "astronaut", name: "ASTRO",     icon: "👨‍🚀", bg: "#423854", border: "#8f75b8" },
+    { id: "dragon",    name: "DRAGON",    icon: "🐉", bg: "#5c2a2a", border: "#b85c5c" },
+    { id: "hero",      name: "HERO",      icon: "🦸", bg: "#2a425c", border: "#5c8eb8" },
+    { id: "alien",     name: "ALIEN",     icon: "👽", bg: "#2a5c3b", border: "#5cb87d" },
+    { id: "cyber",     name: "CYBER",     icon: "👾", bg: "#542a5c", border: "#b85cb0" },
+    { id: "fox",       name: "FOX",       icon: "🦊", bg: "#5c3d2a", border: "#b87c5c" },
+    { id: "owl",       name: "OWL",       icon: "🦉", bg: "#473f32", border: "#8a7d67" },
+    { id: "bear",      name: "BEAR",      icon: "🐻", bg: "#3b2f28", border: "#786154" },
+    { id: "lion",      name: "LION",      icon: "🦁", bg: "#594924", border: "#ad914e" },
+];
+
+let selectedAvatar = "wizard";
+
+function getAvatarData(avatarId, username = "") {
+    const found = AVATARS.find(a => a.id === avatarId);
+    if (found) return found;
+    return {
+        id: avatarId || "default",
+        name: username || "HERO",
+        icon: (username || "?").charAt(0).toUpperCase(),
+        bg: getAvatarColor(username || avatarId || "user"),
+        border: "#A1BC98"
+    };
+}
+
+function renderAvatarPicker() {
+    const pickerGrid = document.getElementById("avatar-picker-grid");
+    if (!pickerGrid) return;
+    pickerGrid.innerHTML = "";
+
+    AVATARS.forEach((av) => {
+        const item = document.createElement("div");
+        item.className = `avatar-option ${av.id === selectedAvatar ? "selected" : ""}`;
+        item.dataset.id = av.id;
+        item.style.backgroundColor = av.bg;
+        item.style.borderColor = av.border;
+        item.title = av.name;
+
+        item.innerHTML = `
+            <span class="avatar-option-icon">${av.icon}</span>
+            <span class="avatar-option-name">${av.name}</span>
+        `;
+
+        item.addEventListener("click", () => {
+            selectedAvatar = av.id;
+            document.querySelectorAll(".avatar-option").forEach(el => el.classList.remove("selected"));
+            item.classList.add("selected");
+        });
+
+        pickerGrid.appendChild(item);
+    });
+}
+
 // Ranks
 const RANKS = [
     { level: 1, xp: 0,   name: "NEWBIE",    next: 50   },
@@ -90,7 +148,7 @@ function connect() {
     ws.onopen = () => {
         reconnectAttempts = 0;
         updateConnectionStatus("connected");
-        ws.send(JSON.stringify({ type: "join", username: currentUsername }));
+        ws.send(JSON.stringify({ type: "join", username: currentUsername, avatar: selectedAvatar }));
     };
 
     ws.onmessage = (event) => {
@@ -146,7 +204,7 @@ function handleMessage(data) {
             break;
 
         case "message":
-            addChatMessage(data.username, data.text, data.timestamp);
+            addChatMessage(data.username, data.text, data.timestamp, data.avatar);
             hideTypingIndicator(data.username);
             if (data.username !== currentUsername && !isTabFocused) playNotificationSound();
             break;
@@ -193,18 +251,28 @@ function addSystemMessage(text, time, subtype = "") {
     scrollToBottom();
 }
 
-function addChatMessage(username, text, time) {
+function addChatMessage(username, text, time, avatarId = "wizard") {
     const isOwn = username === currentUsername;
+    const avatarData = getAvatarData(avatarId, username);
     const el = document.createElement("div");
     el.className = `message ${isOwn ? "own" : "other"}`;
+
+    const avatarHtml = `
+        <div class="chat-msg-avatar" style="background:${avatarData.bg}; border-color:${avatarData.border}" title="${escapeHtml(avatarData.name)}">
+            <span>${avatarData.icon}</span>
+        </div>`;
+
     el.innerHTML = `
+        ${!isOwn ? avatarHtml : ""}
         <div class="message-bubble">
             <div class="message-meta">
                 <span class="message-username">${escapeHtml(username)}</span>
                 ${time ? `<span class="message-time">${escapeHtml(time)}</span>` : ""}
             </div>
             <p class="message-text">${escapeHtml(text)}</p>
-        </div>`;
+        </div>
+        ${isOwn ? avatarHtml : ""}
+    `;
     messagesScroll.appendChild(el);
     scrollToBottom();
 }
@@ -215,16 +283,20 @@ function updateUserList(users) {
     if (headerSubtitle) headerSubtitle.textContent = `${count} PLAYER${count !== 1 ? "S" : ""} ONLINE`;
     if (onlineBadge) onlineBadge.textContent = count;
 
-    users.forEach((user) => {
+    users.forEach((item) => {
+        const username = typeof item === "object" ? item.username : item;
+        const avatarId = typeof item === "object" ? item.avatar : "wizard";
+        const avatarData = getAvatarData(avatarId, username);
+
         const li = document.createElement("li");
-        const isYou = user === currentUsername;
+        const isYou = username === currentUsername;
         if (isYou) li.classList.add("is-you");
 
         li.innerHTML = `
-            <div class="user-avatar" style="background:${getAvatarColor(user)}">
-                ${user.charAt(0).toUpperCase()}
+            <div class="user-avatar" style="background:${avatarData.bg}; border-color:${avatarData.border}">
+                ${avatarData.icon}
             </div>
-            <span class="user-name">${escapeHtml(user)}</span>
+            <span class="user-name">${escapeHtml(username)}</span>
             ${isYou ? '<span class="user-you-tag">YOU</span>' : ""}`;
         userList.appendChild(li);
     });
@@ -263,7 +335,7 @@ function renderHistory(messages) {
     messagesScroll.appendChild(sep);
 
     messages.forEach((msg) => {
-        if (msg.type === "message") addChatMessage(msg.username, msg.text, msg.timestamp);
+        if (msg.type === "message") addChatMessage(msg.username, msg.text, msg.timestamp, msg.avatar);
     });
 
     const sep2 = document.createElement("div");
@@ -496,6 +568,7 @@ window.addEventListener("blur",  () => { isTabFocused = false; });
 
 window.addEventListener("load", () => {
     usernameInput.focus();
+    renderAvatarPicker();
     // Init XP bar
     updateXPBar();
 });
