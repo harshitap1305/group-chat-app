@@ -136,7 +136,7 @@ manager = ConnectionManager()
 FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 5000))
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[f"http://localhost:{FRONTEND_PORT}", f"http://127.0.0.1:{FRONTEND_PORT}"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
