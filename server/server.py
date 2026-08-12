@@ -8,7 +8,6 @@ FastAPI WebSocket server that handles:
 - Graceful disconnection handling
 - Message history for new joiners
 - Typing indicators
-- Static frontend file serving
 """
 
 import json
@@ -16,10 +15,13 @@ import asyncio
 import os
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env at project root
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 
 # ---------------------------------------------------------------------------
@@ -89,9 +91,15 @@ class ConnectionManager:
 app = FastAPI(title="Group Chat Server")
 manager = ConnectionManager()
 
-# Resolve paths
-BASE_DIR = Path(__file__).resolve().parent.parent
-CLIENT_DIR = BASE_DIR / "client"
+# Allow requests from the frontend dev server
+FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 5000))
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[f"http://localhost:{FRONTEND_PORT}", f"http://127.0.0.1:{FRONTEND_PORT}"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def timestamp() -> str:
@@ -224,18 +232,6 @@ async def websocket_endpoint(websocket: WebSocket):
             })
 
 
-# ---------------------------------------------------------------------------
-# Serve Frontend (Static Files)
-# ---------------------------------------------------------------------------
-
-@app.get("/")
-async def serve_index():
-    """Serve the main chat HTML page."""
-    return FileResponse(str(CLIENT_DIR / "index.html"))
-
-
-# Mount the client directory for CSS/JS files
-app.mount("/static", StaticFiles(directory=str(CLIENT_DIR)), name="static")
 
 
 # ---------------------------------------------------------------------------
@@ -244,12 +240,12 @@ app.mount("/static", StaticFiles(directory=str(CLIENT_DIR)), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    
-    port = int(os.environ.get("PORT", 8000))
-    
+
+    port = int(os.environ.get("BACKEND_PORT", 8000))
+
     print("=" * 50)
-    print("  Group Chat Server")
+    print("  Group Chat Server (Backend Only)")
     print(f"  WebSocket: ws://0.0.0.0:{port}/ws")
-    print(f"  Frontend:  http://0.0.0.0:{port}")
+    print(f"  Frontend:  http://localhost:{FRONTEND_PORT} (separate server)")
     print("=" * 50)
     uvicorn.run(app, host="0.0.0.0", port=port)

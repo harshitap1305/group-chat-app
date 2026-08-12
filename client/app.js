@@ -7,7 +7,9 @@
 
 // ── Config ───────────────────────────────────────────────────────
 const WS_PROTOCOL         = window.location.protocol === "https:" ? "wss:" : "ws:";
-const SERVER_URL          = `${WS_PROTOCOL}//${window.location.host}/ws`;
+const BACKEND_PORT        = 8000;  // Defined in root .env (BACKEND_PORT)
+const BACKEND_HOST        = `${window.location.hostname}:${BACKEND_PORT}`;
+const SERVER_URL          = `${WS_PROTOCOL}//${BACKEND_HOST}/ws`;
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY  = 10000;
 
