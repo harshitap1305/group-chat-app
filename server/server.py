@@ -109,20 +109,20 @@ class ConnectionManager:
         self._cleanup_timer = loop.call_later(
             self.HISTORY_CLEAR_DELAY, self._clear_history
         )
-        print(f"[⏱] Room empty — history will clear in {self.HISTORY_CLEAR_DELAY}s")
+        print(f"[TIMER] Room empty — history will clear in {self.HISTORY_CLEAR_DELAY}s")
 
     def _cancel_cleanup_timer(self):
         """Cancel the pending history-clear timer (e.g. someone joined back)."""
         if self._cleanup_timer is not None:
             self._cleanup_timer.cancel()
             self._cleanup_timer = None
-            print("[⏱] Cleanup timer cancelled — someone rejoined")
+            print("[TIMER] Cleanup timer cancelled — someone rejoined")
 
     def _clear_history(self):
         """Wipe the message history (called by the timer callback)."""
         self._cleanup_timer = None
         self.message_history.clear()
-        print("[🗑] Chat history cleared — new session starts")
+        print("[TRASH] Chat history cleared — new session starts")
 
 
 # ---------------------------------------------------------------------------
