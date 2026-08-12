@@ -1,123 +1,116 @@
 /**
- * Group Chat — WebSocket Client
- * ==============================
- * Handles WebSocket connection, message rendering, and UI state.
+ * PixelChat — WebSocket Client (8-bit Gamified)
+ * ==============================================
+ * Handles WebSocket connection, message rendering,
+ * XP / rank / streak / session gamification.
  */
 
-// ── Configuration ────────────────────────────────────────────────
-// Auto-detect the server URL from the page origin (no hardcoding needed)
-const WS_PROTOCOL = window.location.protocol === "https:" ? "wss:" : "ws:";
-const SERVER_URL = `${WS_PROTOCOL}//${window.location.host}/ws`;
+// ── Config ───────────────────────────────────────────────────────
+const WS_PROTOCOL         = window.location.protocol === "https:" ? "wss:" : "ws:";
+const SERVER_URL          = `${WS_PROTOCOL}//${window.location.host}/ws`;
+const RECONNECT_BASE_DELAY = 1000;
+const RECONNECT_MAX_DELAY  = 10000;
 
-// Reconnection settings
-const RECONNECT_BASE_DELAY = 1000;  // 1 second
-const RECONNECT_MAX_DELAY = 10000;  // 10 seconds
-
-// Avatar colors for users (deterministic based on username)
+// Avatar bg colors — all derived from #778873 / #A1BC98 palette
 const AVATAR_COLORS = [
-    "#7c6aef", "#e94560", "#34d399", "#f59e0b",
-    "#60a5fa", "#f472b6", "#a78bfa", "#fb7185",
-    "#2dd4bf", "#c084fc", "#38bdf8", "#4ade80",
+    "#778873", "#A1BC98", "#546058", "#8aab88",
+    "#6a8068", "#c8dcc5", "#4a6050", "#9abca0",
+    "#667860", "#b0ccb0", "#506858", "#7a9878",
+];
+
+// Ranks
+const RANKS = [
+    { level: 1, xp: 0,   name: "NEWBIE",    next: 50   },
+    { level: 2, xp: 50,  name: "SQUIRE",    next: 150  },
+    { level: 3, xp: 150, name: "KNIGHT",    next: 320  },
+    { level: 4, xp: 320, name: "CHAMPION",  next: 600  },
+    { level: 5, xp: 600, name: "WARLORD",   next: 1000 },
+    { level: 6, xp: 1000,name: "LEGEND",    next: 1000 },
 ];
 
 // ── State ─────────────────────────────────────────────────────────
-let ws = null;
-let currentUsername = "";
-let reconnectAttempts = 0;
-let reconnectTimer = null;
+let ws                 = null;
+let currentUsername    = "";
+let reconnectAttempts  = 0;
+let reconnectTimer     = null;
 let isIntentionalClose = false;
-let isJoined = false;
-let typingTimeout = null;       // Timer for hiding typing indicator
-let lastTypingSent = 0;         // Timestamp of last typing event sent
-let isTabFocused = true;        // Track if the browser tab is active
+let isJoined           = false;
+let typingTimeout      = null;
+let lastTypingSent     = 0;
+let isTabFocused       = true;
 
-// ── DOM Elements ─────────────────────────────────────────────────
+// Gamification
+let totalXP      = 0;
+let streakCount  = 0;
+let messagesSent = 0;
+let sessionStart = null;
+let sessionTimer = null;
+let currentLevel = 1;
+
+// ── DOM ───────────────────────────────────────────────────────────
 const loginScreen     = document.getElementById("login-screen");
 const chatScreen      = document.getElementById("chat-screen");
 const usernameInput   = document.getElementById("username-input");
 const joinBtn         = document.getElementById("join-btn");
+const joinBtnText     = document.getElementById("join-btn-text");
 const loginError      = document.getElementById("login-error");
 const messagesScroll  = document.getElementById("messages-scroll");
 const messageInput    = document.getElementById("message-input");
 const sendBtn         = document.getElementById("send-btn");
 const userList        = document.getElementById("user-list");
-const statusDot       = document.querySelector(".status-dot");
-const statusText      = document.querySelector(".status-text");
 const headerSubtitle  = document.getElementById("header-subtitle");
 const typingIndicator = document.getElementById("typing-indicator");
 const typingTextEl    = document.getElementById("typing-text");
 const emojiPicker     = document.getElementById("emoji-picker");
 const emojiToggleBtn  = document.getElementById("emoji-toggle-btn");
+const statusDot       = document.getElementById("status-dot");
+const statusText      = document.getElementById("status-text");
 
+// Gamification DOM
+const xpBarFill       = document.getElementById("xp-bar-fill");
+const xpValue         = document.getElementById("xp-value");
+const rankNameEl      = document.getElementById("rank-name");
+const onlineBadge     = document.getElementById("online-count-badge");
+const msgCountEl      = document.getElementById("msg-count-stat");
+const streakEl        = document.getElementById("streak-count");
+const sessionTimeEl   = document.getElementById("session-time-stat");
+const levelupToast    = document.getElementById("levelup-toast");
+const levelupSub      = document.getElementById("levelup-sub");
 
 // ══════════════════════════════════════════════════════════════════
-//  WEBSOCKET CONNECTION
+//  WEBSOCKET
 // ══════════════════════════════════════════════════════════════════
 
 function connect() {
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-        return;
-    }
-
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
     ws = new WebSocket(SERVER_URL);
 
     ws.onopen = () => {
-        console.log("[WS] Connected to server");
         reconnectAttempts = 0;
         updateConnectionStatus("connected");
-
-        // Send join message
-        ws.send(JSON.stringify({
-            type: "join",
-            username: currentUsername
-        }));
+        ws.send(JSON.stringify({ type: "join", username: currentUsername }));
     };
 
     ws.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            handleMessage(data);
-        } catch (err) {
-            console.error("[WS] Failed to parse message:", err);
-        }
+        try { handleMessage(JSON.parse(event.data)); }
+        catch (err) { console.error("[WS] parse error:", err); }
     };
 
-    ws.onclose = (event) => {
-        console.log(`[WS] Disconnected (code: ${event.code})`);
+    ws.onclose = () => {
         updateConnectionStatus("disconnected");
-
-        // If we haven't joined yet and got disconnected, show error on login
-        if (loginScreen && !loginScreen.classList.contains("hidden")) {
-            // Connection closed before joining — likely a validation error
-            return;
-        }
-
-        // Auto-reconnect if not intentional
-        if (!isIntentionalClose && currentUsername) {
-            scheduleReconnect();
-        }
+        if (loginScreen && !loginScreen.classList.contains("hidden")) return;
+        if (!isIntentionalClose && currentUsername) scheduleReconnect();
     };
 
-    ws.onerror = (error) => {
-        console.error("[WS] Error:", error);
-    };
+    ws.onerror = (e) => console.error("[WS] error:", e);
 }
 
 function scheduleReconnect() {
     if (reconnectTimer) clearTimeout(reconnectTimer);
-
-    const delay = Math.min(
-        RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttempts),
-        RECONNECT_MAX_DELAY
-    );
+    const delay = Math.min(RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttempts), RECONNECT_MAX_DELAY);
     reconnectAttempts++;
-
     updateConnectionStatus("reconnecting");
-    console.log(`[WS] Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts})`);
-
-    reconnectTimer = setTimeout(() => {
-        connect();
-    }, delay);
+    reconnectTimer = setTimeout(connect, delay);
 }
 
 function disconnect() {
@@ -126,7 +119,6 @@ function disconnect() {
     if (ws) ws.close();
 }
 
-
 // ══════════════════════════════════════════════════════════════════
 //  MESSAGE HANDLER
 // ══════════════════════════════════════════════════════════════════
@@ -134,7 +126,6 @@ function disconnect() {
 function handleMessage(data) {
     switch (data.type) {
         case "system":
-            // If this is the welcome message, transition to chat screen
             if (!isJoined && data.message && data.message.includes("Welcome")) {
                 isJoined = true;
                 showChatScreen();
@@ -144,6 +135,7 @@ function handleMessage(data) {
 
         case "join":
             addSystemMessage(data.message, data.timestamp, "join");
+            gainXP(5);
             break;
 
         case "leave":
@@ -154,10 +146,7 @@ function handleMessage(data) {
         case "message":
             addChatMessage(data.username, data.text, data.timestamp);
             hideTypingIndicator(data.username);
-            // Play sound if message is from someone else and tab is not focused
-            if (data.username !== currentUsername && !isTabFocused) {
-                playNotificationSound();
-            }
+            if (data.username !== currentUsername && !isTabFocused) playNotificationSound();
             break;
 
         case "userList":
@@ -173,151 +162,219 @@ function handleMessage(data) {
             break;
 
         case "error":
-            // Show error on login screen if not joined yet
             if (!isJoined) {
                 showLoginError(data.message);
                 currentUsername = "";
                 joinBtn.disabled = false;
-                joinBtn.querySelector("span").textContent = "Join Chat";
+                joinBtnText.textContent = "► START QUEST";
             }
             break;
 
         default:
-            console.warn("[WS] Unknown message type:", data.type);
+            console.warn("[WS] unknown type:", data.type);
     }
 }
 
-
 // ══════════════════════════════════════════════════════════════════
-//  UI RENDERING
+//  RENDER
 // ══════════════════════════════════════════════════════════════════
 
-/**
- * Add a system message (join/leave/info) to the chat.
- */
 function addSystemMessage(text, time, subtype = "") {
-    const msgDiv = document.createElement("div");
-    msgDiv.className = `message system ${subtype ? subtype + "-msg" : ""}`;
-
-    msgDiv.innerHTML = `
+    const el = document.createElement("div");
+    el.className = `message system ${subtype ? subtype + "-msg" : ""}`;
+    el.innerHTML = `
         <div class="message-bubble">
             <p class="message-text">${escapeHtml(text)}</p>
             ${time ? `<span class="message-time">${escapeHtml(time)}</span>` : ""}
-        </div>
-    `;
-
-    messagesScroll.appendChild(msgDiv);
+        </div>`;
+    messagesScroll.appendChild(el);
     scrollToBottom();
 }
 
-/**
- * Add a chat message (own or other) to the chat.
- */
 function addChatMessage(username, text, time) {
     const isOwn = username === currentUsername;
-    const msgDiv = document.createElement("div");
-    msgDiv.className = `message ${isOwn ? "own" : "other"}`;
-
-    msgDiv.innerHTML = `
+    const el = document.createElement("div");
+    el.className = `message ${isOwn ? "own" : "other"}`;
+    el.innerHTML = `
         <div class="message-bubble">
             <div class="message-meta">
                 <span class="message-username">${escapeHtml(username)}</span>
                 ${time ? `<span class="message-time">${escapeHtml(time)}</span>` : ""}
             </div>
             <p class="message-text">${escapeHtml(text)}</p>
-        </div>
-    `;
-
-    messagesScroll.appendChild(msgDiv);
+        </div>`;
+    messagesScroll.appendChild(el);
     scrollToBottom();
 }
 
-/**
- * Update the online users sidebar.
- */
 function updateUserList(users) {
     userList.innerHTML = "";
-    headerSubtitle.textContent = `${users.length} online`;
+    const count = users.length;
+    if (headerSubtitle) headerSubtitle.textContent = `${count} PLAYER${count !== 1 ? "S" : ""} ONLINE`;
+    if (onlineBadge) onlineBadge.textContent = count;
 
     users.forEach((user) => {
         const li = document.createElement("li");
         const isYou = user === currentUsername;
-
         if (isYou) li.classList.add("is-you");
 
         li.innerHTML = `
-            <div class="user-avatar" style="background: ${getAvatarColor(user)}">
+            <div class="user-avatar" style="background:${getAvatarColor(user)}">
                 ${user.charAt(0).toUpperCase()}
             </div>
             <span class="user-name">${escapeHtml(user)}</span>
-            ${isYou ? '<span class="user-you-tag">You</span>' : ""}
-        `;
-
+            ${isYou ? '<span class="user-you-tag">YOU</span>' : ""}`;
         userList.appendChild(li);
     });
 }
 
-/**
- * Update the connection status indicator in the header.
- */
 function updateConnectionStatus(status) {
+    if (!statusDot || !statusText) return;
     statusDot.className = "status-dot " + status;
-
-    switch (status) {
-        case "connected":
-            statusText.textContent = "Connected";
-            break;
-        case "disconnected":
-            statusText.textContent = "Disconnected";
-            break;
-        case "reconnecting":
-            statusText.textContent = "Reconnecting...";
-            break;
-    }
+    const labels = { connected: "ONLINE", disconnected: "OFFLINE", reconnecting: "WAIT..." };
+    statusText.textContent = labels[status] || status.toUpperCase();
 }
 
-/**
- * Show an error message on the login screen.
- */
 function showLoginError(message) {
-    loginError.textContent = message;
+    loginError.textContent = "! " + message.toUpperCase();
     joinBtn.disabled = false;
-    joinBtn.querySelector("span").textContent = "Join Chat";
+    joinBtnText.textContent = "► START QUEST";
 }
 
-/**
- * Switch from login to chat screen.
- */
 function showChatScreen() {
     loginScreen.classList.add("hidden");
     chatScreen.classList.remove("hidden");
     messageInput.focus();
+    startSessionTimer();
 }
 
-/**
- * Auto-scroll the messages area to the bottom.
- */
 function scrollToBottom() {
     messagesScroll.scrollTop = messagesScroll.scrollHeight;
 }
 
+function renderHistory(messages) {
+    if (!messages || !messages.length) return;
 
-// ══════════════════════════════════════════════════════════════════
-//  UTILITY FUNCTIONS
-// ══════════════════════════════════════════════════════════════════
+    const sep = document.createElement("div");
+    sep.className = "message system";
+    sep.innerHTML = `<div class="message-bubble"><p class="message-text">--- PREV MESSAGES ---</p></div>`;
+    messagesScroll.appendChild(sep);
 
-/**
- * Escape HTML to prevent XSS.
- */
-function escapeHtml(text) {
-    const div = document.createElement("div");
-    div.textContent = text;
-    return div.innerHTML;
+    messages.forEach((msg) => {
+        if (msg.type === "message") addChatMessage(msg.username, msg.text, msg.timestamp);
+    });
+
+    const sep2 = document.createElement("div");
+    sep2.className = "message system";
+    sep2.innerHTML = `<div class="message-bubble"><p class="message-text">--- NEW MESSAGES ---</p></div>`;
+    messagesScroll.appendChild(sep2);
+    scrollToBottom();
 }
 
-/**
- * Get a deterministic avatar color for a username.
- */
+// ══════════════════════════════════════════════════════════════════
+//  TYPING
+// ══════════════════════════════════════════════════════════════════
+
+function showTypingIndicator(username) {
+    typingTextEl.textContent = `${username.toUpperCase()} TYPING`;
+    typingIndicator.classList.add("active");
+    if (typingTimeout) clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => typingIndicator.classList.remove("active"), 3000);
+}
+
+function hideTypingIndicator(username) {
+    if (typingTextEl.textContent.includes(username.toUpperCase())) {
+        typingIndicator.classList.remove("active");
+        if (typingTimeout) clearTimeout(typingTimeout);
+    }
+}
+
+function sendTypingEvent() {
+    const now = Date.now();
+    if (now - lastTypingSent < 2000) return;
+    lastTypingSent = now;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "typing" }));
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  GAMIFICATION
+// ══════════════════════════════════════════════════════════════════
+
+function gainXP(amount) {
+    totalXP += amount;
+    updateXPBar();
+    checkLevelUp();
+}
+
+function updateXPBar() {
+    const rank = getCurrentRank();
+    const xpInLevel    = totalXP - rank.xp;
+    const xpNeeded     = rank.next - rank.xp;
+    const pct          = rank.level === 6 ? 100 : Math.min(100, (xpInLevel / xpNeeded) * 100);
+
+    if (xpBarFill)  xpBarFill.style.width = `${pct.toFixed(1)}%`;
+    if (xpValue)    xpValue.textContent   = `${totalXP}/${rank.next}`;
+    if (rankNameEl) rankNameEl.textContent = rank.name;
+}
+
+function getCurrentRank() {
+    let current = RANKS[0];
+    for (const r of RANKS) {
+        if (totalXP >= r.xp) current = r;
+        else break;
+    }
+    return current;
+}
+
+function checkLevelUp() {
+    const rank = getCurrentRank();
+    if (rank.level > currentLevel) {
+        currentLevel = rank.level;
+        if (levelupSub) levelupSub.textContent = `NEW RANK: ${rank.name}`;
+        levelupToast.classList.add("show");
+        playLevelUpSound();
+        setTimeout(() => levelupToast.classList.remove("show"), 3500);
+    }
+}
+
+function incrementStreak() {
+    streakCount++;
+    if (streakEl) streakEl.textContent = streakCount;
+    if (streakCount % 5 === 0) gainXP(10);
+}
+
+function incrementMessageCount() {
+    messagesSent++;
+    if (msgCountEl) msgCountEl.textContent = messagesSent;
+    gainXP(2);
+    incrementStreak();
+}
+
+function startSessionTimer() {
+    sessionStart = Date.now();
+    sessionTimer = setInterval(() => {
+        const min = Math.floor((Date.now() - sessionStart) / 60000);
+        if (sessionTimeEl) {
+            sessionTimeEl.textContent = min >= 60
+                ? `${Math.floor(min / 60)}H${min % 60}M`
+                : `${min}M`;
+        }
+        gainXP(1);
+    }, 60000);
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  UTILS
+// ══════════════════════════════════════════════════════════════════
+
+function escapeHtml(text) {
+    const d = document.createElement("div");
+    d.textContent = text;
+    return d.innerHTML;
+}
+
 function getAvatarColor(username) {
     let hash = 0;
     for (let i = 0; i < username.length; i++) {
@@ -326,151 +383,80 @@ function getAvatarColor(username) {
     return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-/**
- * Send a chat message to the server.
- */
 function sendMessage() {
     const text = messageInput.value.trim();
     if (!text) return;
-
     if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-            type: "message",
-            text: text
-        }));
+        ws.send(JSON.stringify({ type: "message", text }));
         messageInput.value = "";
         messageInput.focus();
-        // Close emoji picker after sending
         emojiPicker.classList.remove("open");
         emojiToggleBtn.classList.remove("active");
+        incrementMessageCount();
     }
 }
 
-/**
- * Render message history received on join.
- */
-function renderHistory(messages) {
-    if (!messages || messages.length === 0) return;
-
-    // Add a separator
-    const sep = document.createElement("div");
-    sep.className = "message system";
-    sep.innerHTML = `<div class="message-bubble"><p class="message-text">─── Previous Messages ───</p></div>`;
-    messagesScroll.appendChild(sep);
-
-    messages.forEach((msg) => {
-        if (msg.type === "message") {
-            addChatMessage(msg.username, msg.text, msg.timestamp);
-        }
-    });
-
-    // Add another separator
-    const sep2 = document.createElement("div");
-    sep2.className = "message system";
-    sep2.innerHTML = `<div class="message-bubble"><p class="message-text">─── New Messages ───</p></div>`;
-    messagesScroll.appendChild(sep2);
-
-    scrollToBottom();
-}
-
-/**
- * Show typing indicator for a specific user.
- */
-function showTypingIndicator(username) {
-    typingTextEl.textContent = `${username} is typing...`;
-    typingIndicator.classList.add("active");
-
-    // Clear previous timeout and set new one (hide after 3 seconds)
-    if (typingTimeout) clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => {
-        typingIndicator.classList.remove("active");
-    }, 3000);
-}
-
-/**
- * Hide typing indicator (when user sends a message or leaves).
- */
-function hideTypingIndicator(username) {
-    if (typingTextEl.textContent.includes(username)) {
-        typingIndicator.classList.remove("active");
-        if (typingTimeout) clearTimeout(typingTimeout);
-    }
-}
-
-/**
- * Send typing indicator to server (debounced — max once per 2 seconds).
- */
-function sendTypingEvent() {
-    const now = Date.now();
-    if (now - lastTypingSent < 2000) return; // Debounce: 2 seconds
-    lastTypingSent = now;
-
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "typing" }));
-    }
-}
-
-/**
- * Play a notification ping sound using Web Audio API.
- */
 function playNotificationSound() {
     try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator = ctx.createOscillator();
+        const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-
-        oscillator.connect(gain);
+        osc.connect(gain);
         gain.connect(ctx.destination);
-
-        oscillator.frequency.value = 880;  // A5 note
-        oscillator.type = "sine";
-
-        gain.gain.setValueAtTime(0.2, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.4);
-    } catch (e) {
-        // Audio API not available — silently fail
-    }
+        osc.type = "square";  // 8-bit square wave
+        osc.frequency.value = 440;
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.3);
+    } catch (e) {}
 }
 
+function playLevelUpSound() {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const notes = [262, 330, 392, 523];  // C4 E4 G4 C5 — 8-bit fanfare
+        notes.forEach((freq, i) => {
+            const osc  = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.type = "square";
+            osc.frequency.value = freq;
+            const t = ctx.currentTime + i * 0.12;
+            gain.gain.setValueAtTime(0.12, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+            osc.start(t);
+            osc.stop(t + 0.12);
+        });
+    } catch (e) {}
+}
 
 // ══════════════════════════════════════════════════════════════════
 //  EVENT LISTENERS
 // ══════════════════════════════════════════════════════════════════
 
-// Join button
 joinBtn.addEventListener("click", () => {
     const username = usernameInput.value.trim();
     if (!username) {
-        showLoginError("Please enter a username.");
+        showLoginError("ENTER A NAME FIRST!");
         return;
     }
-
     loginError.textContent = "";
     joinBtn.disabled = true;
-    joinBtn.querySelector("span").textContent = "Connecting...";
+    joinBtnText.textContent = "CONNECTING...";
     currentUsername = username;
     isIntentionalClose = false;
     isJoined = false;
-
-    // Connect — the onopen handler sends the join message,
-    // and handleMessage() takes care of transitioning to the chat screen
     connect();
 });
 
-// Username input — Enter key to join
 usernameInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-        joinBtn.click();
-    }
+    if (e.key === "Enter") joinBtn.click();
 });
 
-// Send button
 sendBtn.addEventListener("click", sendMessage);
 
-// Message input — Enter key to send
 messageInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -478,21 +464,16 @@ messageInput.addEventListener("keydown", (e) => {
     }
 });
 
-// Message input — Typing indicator (fires on every keystroke, debounced internally)
 messageInput.addEventListener("input", () => {
-    if (messageInput.value.trim().length > 0) {
-        sendTypingEvent();
-    }
+    if (messageInput.value.trim().length > 0) sendTypingEvent();
 });
 
-// Emoji toggle button
 emojiToggleBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     emojiPicker.classList.toggle("open");
     emojiToggleBtn.classList.toggle("active");
 });
 
-// Emoji grid — click to insert emoji
 document.getElementById("emoji-grid").addEventListener("click", (e) => {
     const target = e.target.closest(".emoji");
     if (target) {
@@ -501,7 +482,6 @@ document.getElementById("emoji-grid").addEventListener("click", (e) => {
     }
 });
 
-// Close emoji picker when clicking outside
 document.addEventListener("click", (e) => {
     if (!emojiPicker.contains(e.target) && e.target !== emojiToggleBtn) {
         emojiPicker.classList.remove("open");
@@ -509,11 +489,11 @@ document.addEventListener("click", (e) => {
     }
 });
 
-// Track tab focus for sound notifications
 window.addEventListener("focus", () => { isTabFocused = true; });
 window.addEventListener("blur",  () => { isTabFocused = false; });
 
-// Focus username input on load
 window.addEventListener("load", () => {
     usernameInput.focus();
+    // Init XP bar
+    updateXPBar();
 });
