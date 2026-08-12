@@ -37,9 +37,14 @@ class ConnectionManager:
         # Store last N messages for new joiners
         self.message_history: list[dict] = []
         self.MAX_HISTORY = 50
+        # Timer handle for clearing history after the room empties
+        self._cleanup_timer: asyncio.TimerHandle | None = None
+        self.HISTORY_CLEAR_DELAY = 60  # seconds
 
     def add(self, websocket: WebSocket, username: str):
         """Register a new connection with a username."""
+        # Someone joined — cancel the pending history-clear if any
+        self._cancel_cleanup_timer()
         self.active_connections[websocket] = username
 
     def remove(self, websocket: WebSocket) -> str | None:
@@ -82,6 +87,31 @@ class ConnectionManager:
         self.message_history.append(message)
         if len(self.message_history) > self.MAX_HISTORY:
             self.message_history.pop(0)
+
+    # ── Room-empty cleanup ──────────────────────────────────────────
+
+    def start_cleanup_timer(self):
+        """Start a timer to clear chat history after HISTORY_CLEAR_DELAY seconds.
+        Called when the last user leaves the room."""
+        self._cancel_cleanup_timer()
+        loop = asyncio.get_event_loop()
+        self._cleanup_timer = loop.call_later(
+            self.HISTORY_CLEAR_DELAY, self._clear_history
+        )
+        print(f"[⏱] Room empty — history will clear in {self.HISTORY_CLEAR_DELAY}s")
+
+    def _cancel_cleanup_timer(self):
+        """Cancel the pending history-clear timer (e.g. someone joined back)."""
+        if self._cleanup_timer is not None:
+            self._cleanup_timer.cancel()
+            self._cleanup_timer = None
+            print("[⏱] Cleanup timer cancelled — someone rejoined")
+
+    def _clear_history(self):
+        """Wipe the message history (called by the timer callback)."""
+        self._cleanup_timer = None
+        self.message_history.clear()
+        print("[🗑] Chat history cleared — new session starts")
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +245,8 @@ async def websocket_endpoint(websocket: WebSocket):
         # ── Cleanup: remove user and notify others ──────────────────────
         if username and websocket in manager.active_connections:
             manager.remove(websocket)
-            print(f"[-] {username} left    |  Online: {len(manager.active_connections)}")
+            online = len(manager.active_connections)
+            print(f"[-] {username} left    |  Online: {online}")
 
             # Notify remaining users
             await manager.broadcast({
@@ -230,6 +261,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 "type": "userList",
                 "users": manager.get_all_users()
             })
+
+            # If the room is now empty, start the history-clear countdown
+            if online == 0:
+                manager.start_cleanup_timer()
 
 
 
