@@ -123,22 +123,31 @@ let sessionStart = null;
 let sessionTimer = null;
 let currentLevel = 1;
 
+// Attachment State
+let pendingFile = null;
+
 // ── DOM ───────────────────────────────────────────────────────────
-const loginScreen     = document.getElementById("login-screen");
-const chatScreen      = document.getElementById("chat-screen");
-const usernameInput   = document.getElementById("username-input");
-const joinBtn         = document.getElementById("join-btn");
-const joinBtnText     = document.getElementById("join-btn-text");
-const loginError      = document.getElementById("login-error");
-const messagesScroll  = document.getElementById("messages-scroll");
-const messageInput    = document.getElementById("message-input");
-const sendBtn         = document.getElementById("send-btn");
-const userList        = document.getElementById("user-list");
-const headerSubtitle  = document.getElementById("header-subtitle");
-const typingIndicator = document.getElementById("typing-indicator");
-const typingTextEl    = document.getElementById("typing-text");
-const emojiPicker     = document.getElementById("emoji-picker");
-const emojiToggleBtn  = document.getElementById("emoji-toggle-btn");
+const loginScreen          = document.getElementById("login-screen");
+const chatScreen           = document.getElementById("chat-screen");
+const usernameInput        = document.getElementById("username-input");
+const joinBtn              = document.getElementById("join-btn");
+const joinBtnText          = document.getElementById("join-btn-text");
+const loginError           = document.getElementById("login-error");
+const messagesScroll       = document.getElementById("messages-scroll");
+const messageInput         = document.getElementById("message-input");
+const sendBtn              = document.getElementById("send-btn");
+const userList             = document.getElementById("user-list");
+const headerSubtitle       = document.getElementById("header-subtitle");
+const typingIndicator      = document.getElementById("typing-indicator");
+const typingTextEl         = document.getElementById("typing-text");
+const emojiPicker          = document.getElementById("emoji-picker");
+const emojiToggleBtn       = document.getElementById("emoji-toggle-btn");
+const fileInput            = document.getElementById("file-input");
+const attachmentToggleBtn  = document.getElementById("attachment-toggle-btn");
+const attachmentPreviewBar = document.getElementById("attachment-preview-bar");
+const attachmentFilename   = document.getElementById("attachment-filename");
+const attachmentFilesize   = document.getElementById("attachment-filesize");
+const attachmentRemoveBtn  = document.getElementById("attachment-remove-btn");
 const statusDot       = document.getElementById("status-dot");
 const statusText      = document.getElementById("status-text");
 
@@ -222,7 +231,7 @@ function handleMessage(data) {
             break;
 
         case "message":
-            addChatMessage(data.username, data.text, data.timestamp, data.avatar);
+            addChatMessage(data.username, data.text, data.timestamp, data.avatar, data.attachment);
             hideTypingIndicator(data.username);
             playSound("message");
             if (data.username !== currentUsername && !isTabFocused) playNotificationSound();
@@ -270,7 +279,7 @@ function addSystemMessage(text, time, subtype = "") {
     scrollToBottom();
 }
 
-function addChatMessage(username, text, time, avatarId = "wizard") {
+function addChatMessage(username, text, time, avatarId = "wizard", attachment = null) {
     const isOwn = username === currentUsername;
     const avatarData = getAvatarData(avatarId, username);
     const el = document.createElement("div");
@@ -281,6 +290,46 @@ function addChatMessage(username, text, time, avatarId = "wizard") {
             <span>${avatarData.icon}</span>
         </div>`;
 
+    let attachmentHtml = "";
+    if (attachment && attachment.url) {
+        const fileUrl = escapeHtml(attachment.url);
+        const fileName = escapeHtml(attachment.fileName || "attachment");
+        const fileType = (attachment.fileType || "").toLowerCase();
+        const fileSize = formatBytes(attachment.fileSize || 0);
+
+        if (fileType.startsWith("image/")) {
+            attachmentHtml = `
+                <div class="chat-attachment chat-attachment-image">
+                    <a href="${fileUrl}" target="_blank" title="View Full Image">
+                        <img src="${fileUrl}" alt="${fileName}">
+                    </a>
+                </div>`;
+        } else if (fileType.startsWith("video/")) {
+            attachmentHtml = `
+                <div class="chat-attachment chat-attachment-video">
+                    <video controls src="${fileUrl}"></video>
+                </div>`;
+        } else if (fileType.startsWith("audio/")) {
+            attachmentHtml = `
+                <div class="chat-attachment chat-attachment-audio">
+                    <audio controls src="${fileUrl}"></audio>
+                </div>`;
+        } else {
+            const icon = getFileIcon(fileType, fileName);
+            attachmentHtml = `
+                <div class="chat-attachment">
+                    <a href="${fileUrl}" download="${fileName}" class="chat-attachment-file" target="_blank" title="Download File">
+                        <span class="file-card-icon">${icon}</span>
+                        <div class="file-card-details">
+                            <span class="file-card-name">${fileName}</span>
+                            <span class="file-card-size">${fileSize}</span>
+                        </div>
+                        <span class="file-card-dl-btn">💾 DOWNLOAD</span>
+                    </a>
+                </div>`;
+        }
+    }
+
     el.innerHTML = `
         ${!isOwn ? avatarHtml : ""}
         <div class="message-bubble">
@@ -288,7 +337,8 @@ function addChatMessage(username, text, time, avatarId = "wizard") {
                 <span class="message-username">${escapeHtml(username)}</span>
                 ${time ? `<span class="message-time">${escapeHtml(time)}</span>` : ""}
             </div>
-            <p class="message-text">${escapeHtml(text)}</p>
+            ${text ? `<p class="message-text">${escapeHtml(text)}</p>` : ""}
+            ${attachmentHtml}
         </div>
         ${isOwn ? avatarHtml : ""}
     `;
@@ -354,7 +404,7 @@ function renderHistory(messages) {
     messagesScroll.appendChild(sep);
 
     messages.forEach((msg) => {
-        if (msg.type === "message") addChatMessage(msg.username, msg.text, msg.timestamp, msg.avatar);
+        if (msg.type === "message") addChatMessage(msg.username, msg.text, msg.timestamp, msg.avatar, msg.attachment);
     });
 
     const sep2 = document.createElement("div");
@@ -476,17 +526,79 @@ function getAvatarColor(username) {
     return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-function sendMessage() {
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function getFileIcon(fileType, fileName) {
+    const ext = fileName.split('.').pop().toLowerCase();
+    if (ext === 'pdf' || fileType.includes('pdf')) return '📄';
+    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext) || fileType.includes('zip') || fileType.includes('compressed')) return '📦';
+    if (['js', 'py', 'html', 'css', 'json', 'cpp', 'c', 'java', 'ts', 'sh'].includes(ext)) return '💻';
+    if (['doc', 'docx', 'txt', 'rtf', 'md'].includes(ext) || fileType.includes('text')) return '📝';
+    return '📁';
+}
+
+function clearPendingAttachment() {
+    pendingFile = null;
+    if (fileInput) fileInput.value = "";
+    if (attachmentPreviewBar) attachmentPreviewBar.classList.add("hidden");
+}
+
+async function sendMessage() {
     const text = messageInput.value.trim();
-    if (!text) return;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "message", text }));
-        messageInput.value = "";
-        messageInput.focus();
-        emojiPicker.classList.remove("open");
-        emojiToggleBtn.classList.remove("active");
-        incrementMessageCount();
+    if (!text && !pendingFile) return;
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    let attachmentData = null;
+
+    if (pendingFile) {
+        try {
+            sendBtn.disabled = true;
+            sendBtn.textContent = "UPLOADING...";
+            const formData = new FormData();
+            formData.append("file", pendingFile);
+
+            const uploadProtocol = window.location.protocol;
+            const uploadUrl = `${uploadProtocol}//${BACKEND_HOST}/upload`;
+            const response = await fetch(uploadUrl, {
+                method: "POST",
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error("Upload failed");
+            }
+            attachmentData = await response.json();
+        } catch (err) {
+            console.error("File upload error:", err);
+            alert("Failed to upload file. Please try again.");
+            sendBtn.disabled = false;
+            sendBtn.textContent = "SEND ►";
+            return;
+        } finally {
+            sendBtn.disabled = false;
+            sendBtn.textContent = "SEND ►";
+        }
     }
+
+    ws.send(JSON.stringify({
+        type: "message",
+        text,
+        attachment: attachmentData
+    }));
+
+    messageInput.value = "";
+    clearPendingAttachment();
+    messageInput.focus();
+    emojiPicker.classList.remove("open");
+    emojiToggleBtn.classList.remove("active");
+    incrementMessageCount();
 }
 
 function playNotificationSound() {
@@ -574,6 +686,23 @@ document.getElementById("emoji-grid").addEventListener("click", (e) => {
         messageInput.focus();
     }
 });
+
+if (attachmentToggleBtn && fileInput) {
+    attachmentToggleBtn.addEventListener("click", () => fileInput.click());
+
+    fileInput.addEventListener("change", () => {
+        if (fileInput.files && fileInput.files[0]) {
+            pendingFile = fileInput.files[0];
+            attachmentFilename.textContent = pendingFile.name;
+            attachmentFilesize.textContent = `(${formatBytes(pendingFile.size)})`;
+            attachmentPreviewBar.classList.remove("hidden");
+        }
+    });
+
+    if (attachmentRemoveBtn) {
+        attachmentRemoveBtn.addEventListener("click", clearPendingAttachment);
+    }
+}
 
 document.addEventListener("click", (e) => {
     if (!emojiPicker.contains(e.target) && e.target !== emojiToggleBtn) {

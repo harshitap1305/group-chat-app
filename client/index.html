@@ -210,7 +210,17 @@
                         </div>
                     </div>
 
+                    <!-- Attachment preview bar -->
+                    <div class="attachment-preview-bar hidden" id="attachment-preview-bar">
+                        <span class="attachment-icon">📎</span>
+                        <span class="attachment-filename" id="attachment-filename">filename.png</span>
+                        <span class="attachment-filesize" id="attachment-filesize">(0 KB)</span>
+                        <button class="attachment-remove-btn" id="attachment-remove-btn" title="Remove attachment">✕</button>
+                    </div>
+
                     <div class="input-row">
+                        <input type="file" id="file-input" style="display: none;">
+                        <button class="attachment-toggle-btn" id="attachment-toggle-btn" title="Attach media/file">📎</button>
                         <button class="emoji-toggle-btn" id="emoji-toggle-btn" title="Emoji">☺</button>
                         <div class="pixel-input-wrap chat-input-wrap">
                             <span class="input-prompt">▸</span>
