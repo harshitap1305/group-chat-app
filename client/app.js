@@ -10,6 +10,22 @@ const WS_PROTOCOL         = window.location.protocol === "https:" ? "wss:" : "ws
 const BACKEND_PORT        = 8000;  // Defined in root .env (BACKEND_PORT)
 const BACKEND_HOST        = `${window.location.hostname}:${BACKEND_PORT}`;
 const SERVER_URL          = `${WS_PROTOCOL}//${BACKEND_HOST}/ws`;
+// ── Sounds ───────────────────────────────────────────────────────
+const SOUNDS = {
+    join:    new Audio("/static/sounds/mushroom.mp3"),   // mushroom_mario  — someone joins
+    message: new Audio("/static/sounds/coin.mp3"),       // mario_coin      — new message
+    leave:   new Audio("/static/sounds/pipe.mp3"),       // mario_bros_pipe — someone leaves
+};
+// Pre-load clips so first play is instant
+Object.values(SOUNDS).forEach(a => { a.preload = "auto"; a.volume = 0.5; });
+
+function playSound(name) {
+    const clip = SOUNDS[name];
+    if (!clip) return;
+    clip.currentTime = 0;
+    clip.play().catch(() => {});   // silently ignore if browser blocks autoplay
+}
+
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY  = 10000;
 
@@ -137,17 +153,20 @@ function handleMessage(data) {
 
         case "join":
             addSystemMessage(data.message, data.timestamp, "join");
+            playSound("join");
             gainXP(5);
             break;
 
         case "leave":
             addSystemMessage(data.message, data.timestamp, "leave");
             hideTypingIndicator(data.username);
+            playSound("leave");
             break;
 
         case "message":
             addChatMessage(data.username, data.text, data.timestamp);
             hideTypingIndicator(data.username);
+            playSound("message");
             if (data.username !== currentUsername && !isTabFocused) playNotificationSound();
             break;
 
