@@ -27,7 +27,7 @@ class ConnectionManager:
         self.message_history: list[dict] = []
         self.MAX_HISTORY = 50
         self._cleanup_timer: asyncio.TimerHandle | None = None
-        self.HISTORY_CLEAR_DELAY = 60  # seconds
+        self.HISTORY_CLEAR_DELAY = 300  
 
     def add(self, websocket: WebSocket, username: str, avatar: str = "avatar-1"):
         """Register a new connection with a username and avatar."""
