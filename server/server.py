@@ -1,13 +1,5 @@
 """
 Real-Time Group Chat Server
-============================
-FastAPI WebSocket server that handles:
-- User join/leave notifications
-- Real-time message broadcasting
-- Username validation (uniqueness)
-- Graceful disconnection handling
-- Message history for new joiners
-- Typing indicators
 """
 
 import json
@@ -19,7 +11,6 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables from .env at project root
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, HTTPException
@@ -27,26 +18,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 
-# ---------------------------------------------------------------------------
-# Connection Manager — tracks all active WebSocket connections
-# ---------------------------------------------------------------------------
 
 class ConnectionManager:
     """Manages WebSocket connections and message broadcasting."""
 
     def __init__(self):
-        # Maps WebSocket objects to dict with username and avatar
         self.active_connections: dict[WebSocket, dict] = {}
-        # Store last N messages for new joiners
         self.message_history: list[dict] = []
         self.MAX_HISTORY = 50
-        # Timer handle for clearing history after the room empties
         self._cleanup_timer: asyncio.TimerHandle | None = None
         self.HISTORY_CLEAR_DELAY = 60  # seconds
 
     def add(self, websocket: WebSocket, username: str, avatar: str = "avatar-1"):
         """Register a new connection with a username and avatar."""
-        # Someone joined — cancel the pending history-clear if any
         self._cancel_cleanup_timer()
         self.active_connections[websocket] = {
             "username": username,
@@ -91,7 +75,6 @@ class ConnectionManager:
                     delivered += 1
                 except Exception:
                     disconnected.append(ws)
-        # Clean up any broken connections
         for ws in disconnected:
             self.active_connections.pop(ws, None)
         return delivered
@@ -107,7 +90,6 @@ class ConnectionManager:
         if len(self.message_history) > self.MAX_HISTORY:
             self.message_history.pop(0)
 
-    # ── Room-empty cleanup ──────────────────────────────────────────
 
     def start_cleanup_timer(self):
         """Start a timer to clear chat history after HISTORY_CLEAR_DELAY seconds.
@@ -195,7 +177,7 @@ async def websocket_endpoint(websocket: WebSocket):
     username = None
 
     try:
-        # ── Phase 1: Wait for the join message ──────────────────────────
+        # ──  Wait for the join message ──────────────────────────
         data = await websocket.receive_json()
 
         if data.get("type") != "join":
@@ -227,7 +209,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close(code=1008)
             return
 
-        # ── Phase 2: Register the user ──────────────────────────────────
+        # ──  Register the user ──────────────────────────────────
         manager.add(websocket, username, avatar)
         print(f"[+] {username} ({avatar}) joined  |  Online: {len(manager.active_connections)}")
 
@@ -260,7 +242,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "messages": manager.message_history
             })
 
-        # ── Phase 3: Listen for chat messages ───────────────────────────
+        # ──  Listen for chat messages ───────────────────────────
         while True:
             data = await websocket.receive_json()
             msg_type = data.get("type")
@@ -268,7 +250,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if msg_type == "message":
                 text = data.get("text", "").strip()
                 client_msg_id = data.get("client_msg_id", "")
-                attachment = data.get("attachment")  # dict: { url, fileName, fileType, fileSize }
+                attachment = data.get("attachment")  
                 if text or attachment:
                     msg = {
                         "type": "message",
@@ -278,21 +260,20 @@ async def websocket_endpoint(websocket: WebSocket):
                         "attachment": attachment,
                         "timestamp": timestamp()
                     }
-                    # Store in history and broadcast to ALL
+               
                     manager.add_to_history(msg)
                     delivered = await manager.send_to_all(msg)
 
-                    # Determine receipt status and send back to sender only
-                    # delivered includes the sender themselves, so subtract 1
+                    
                     others_reached = delivered - 1   # exclude sender's own copy
                     total_others   = len(manager.active_connections) - 1
 
                     if total_others <= 0:
-                        receipt_status = "sent"           # alone in room
+                        receipt_status = "sent"         
                     elif others_reached >= total_others:
-                        receipt_status = "delivered_all"  # everyone got it
+                        receipt_status = "delivered_all"  
                     else:
-                        receipt_status = "partial"        # some missed it
+                        receipt_status = "partial"       
 
                     await websocket.send_json({
                         "type": "receipt",
@@ -308,12 +289,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 }, exclude=websocket)
 
     except WebSocketDisconnect:
-        # Client closed the connection normally
+
         pass
     except Exception as e:
         print(f"[!] Error for {username or 'unknown'}: {e}")
     finally:
-        # ── Cleanup: remove user and notify others ──────────────────────
+       
         if username and websocket in manager.active_connections:
             manager.remove(websocket)
             online = len(manager.active_connections)
@@ -340,9 +321,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 
-# ---------------------------------------------------------------------------
-# Run with: python server.py
-# ---------------------------------------------------------------------------
+
 
 if __name__ == "__main__":
     import uvicorn
