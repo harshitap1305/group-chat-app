@@ -1,67 +1,84 @@
-# Group Chat Application
+# PixelChat — Group Quest v1.0
 
-A real-time group chat application built with **FastAPI WebSockets** (Python) and **Vanilla HTML/CSS/JS**.
+A **real-time, gamified group chat** built with **FastAPI WebSockets** (Python) and **Vanilla HTML/CSS/JS**, styled with a retro 8-bit pixel aesthetic.
+
+---
 
 ## Features
 
-- ✅ Real-time message broadcasting to all connected users
-- ✅ User join/leave notifications
-- ✅ Unique usernames for identifying participants
-- ✅ Graceful handling of client disconnections
+- ✅ Real-time message broadcasting via WebSockets
+- ✅ User join/leave notifications with sound effects (Mario-inspired)
+- ✅ Unique usernames — duplicates are rejected server-side
+- ✅ **Avatar picker** — 12 pre-built pixel avatars (Wizard, Robot, Ninja, Astronaut, Dragon, and more)
+- ✅ **Gamification system** — XP, ranks (Newbie → Legend), message streaks, and level-up toasts
+- ✅ **Message receipt indicators** — 😴 Sent · 😃 Partial · 😎 Delivered to all
+- ✅ **Optimistic UI** — own messages appear instantly before server confirmation
+- ✅ **File & media attachments** — images (inline preview), video, audio, PDFs, and generic files
+- ✅ **Typing indicator** — shows when another player is typing (with auto-timeout)
+- ✅ **Emoji picker** — quick-react panel with 28 emojis
+- ✅ **Message history** — last 50 messages replayed for new joiners; auto-cleared 60 s after the room empties
+- ✅ **Live online sidebar** — sorted player list with avatars and XP stats
+- ✅ Connection status indicator (Online / Offline / Reconnecting)
 - ✅ Auto-reconnect with exponential backoff
-- ✅ Online users sidebar (live-updating)
-- ✅ Connection status indicator
-- ✅ Premium dark-themed UI with animations
-- ✅ Separated frontend & backend servers with configurable ports
+- ✅ Info modal explaining receipt emojis
+- ✅ Leave button — returns user to the login screen cleanly
+- ✅ Scanline overlay and retro pixel background
+
+---
 
 ## Tech Stack
 
-| Layer      | Technology                  |
-|------------|------------------------------|
-| Backend    | Python 3 + FastAPI + Uvicorn |
-| Frontend   | HTML + CSS + JavaScript      |
-| Protocol   | WebSockets (RFC 6455)        |
+| Layer     | Technology                                        |
+|-----------|---------------------------------------------------|
+| Backend   | Python 3 · FastAPI · Uvicorn · python-multipart   |
+| Frontend  | HTML5 · Vanilla CSS · Vanilla JS (no frameworks)  |
+| Fonts     | Press Start 2P · VT323 (Google Fonts)             |
+| Protocol  | WebSockets (RFC 6455) · REST (`POST /upload`)     |
+
+---
 
 ## Project Structure
 
 ```
 group-chat-app/
-├── .env                    # Local port configuration (not committed)
-├── .env.example            # Template — copy this to create .env
+├── .env                      # Local port config (not committed)
+├── .env.example              # Template — copy to create .env
 ├── server/
-│   ├── requirements.txt    # Python dependencies
-│   └── server.py           # FastAPI WebSocket server (port 8000)
+│   ├── requirements.txt      # Python dependencies
+│   ├── server.py             # FastAPI WebSocket + upload server (port 8000)
+│   └── uploads/              # Uploaded files served at /uploads/<uuid>.<ext>
 ├── client/
-│   ├── index.html          # Chat UI
-│   ├── style.css           # Dark theme styles
-│   ├── app.js              # WebSocket client logic
-│   └── serve.py            # Static file server for frontend (port 5000)
-└── README.md               # This file
+│   ├── index.html            # PixelChat UI (login screen + chat screen)
+│   ├── style.css             # Retro 8-bit dark theme + all component styles
+│   ├── app.js                # WebSocket client, gamification, attachment logic
+│   ├── serve.py              # Static file server for frontend (port 5000)
+│   └── sounds/               # 8-bit sound effects (join, coin, pipe)
+└── README.md
 ```
+
+---
 
 ## Environment Configuration
 
-The app uses a `.env` file at the project root to configure ports separately for the frontend and backend.
+The app uses a `.env` file at the project root to configure ports.
 
-### 1. Create your `.env` file
-
-Copy the provided example and adjust ports if needed:
+### 1. Create your `.env`
 
 ```bash
 cp .env.example .env
 ```
 
-The default `.env.example` looks like:
+The default `.env.example`:
 
 ```env
-# Backend (FastAPI WebSocket server)
+# Backend (FastAPI WebSocket + upload server)
 BACKEND_PORT=8000
 
 # Frontend (static file server)
 FRONTEND_PORT=5000
 ```
 
-> **Note:** Never commit your `.env` file — it is already listed in `.gitignore`.
+> **Note:** Never commit your `.env` file — it is already in `.gitignore`.
 
 ---
 
@@ -90,7 +107,10 @@ cd server
 python3 server.py
 ```
 
-The backend starts on `ws://0.0.0.0:8000/ws` and handles all WebSocket connections.
+The server starts on:
+- **WebSocket**: `ws://0.0.0.0:8000/ws`
+- **File upload**: `POST http://0.0.0.0:8000/upload`
+- **Uploaded files**: `http://0.0.0.0:8000/uploads/<filename>`
 
 ### 4. Start the Frontend (Terminal 2)
 
@@ -99,7 +119,7 @@ cd client
 python3 serve.py
 ```
 
-The frontend server starts on `http://0.0.0.0:5000` and serves the static HTML/CSS/JS files.
+The frontend is served at `http://0.0.0.0:5000`.
 
 ### 5. Open in Browser
 
@@ -107,77 +127,124 @@ The frontend server starts on `http://0.0.0.0:5000` and serves the static HTML/C
 http://localhost:5000
 ```
 
-The frontend automatically connects to the backend WebSocket at `ws://localhost:8000/ws`.
+The client automatically connects to `ws://localhost:8000/ws` using `window.location.hostname`.
 
 ---
 
-## Lab Deployment (4 Machines)
+## Lab / Multi-Machine Deployment
 
-1. **Machine 1** (Server): Run both `server.py` and `serve.py` — note its IP address (`ip addr` on Linux)
-2. **Machines 1–4** (Clients): Open `http://<machine-1-ip>:5000` in a browser
-3. Each user enters a unique username and joins the chat
+1. **Machine 1** (Server): Run both `server.py` and `serve.py` — note its IP (`ip addr` on Linux).
+2. **Machines 1–4** (Clients): Open `http://<machine-1-ip>:5000` in any browser.
+3. Each player picks an avatar, enters a unique name, and joins the quest.
 
-> The WebSocket in `app.js` uses `window.location.hostname` + backend port `8000`, so clients will automatically connect to the correct backend host.
+> The WebSocket URL is derived from `window.location.hostname` + `BACKEND_PORT`, so clients automatically connect to the correct host with zero configuration.
 
 ---
 
 ## Architecture
 
 ```
-┌───────────────────────────────────────────────────────┐
-│                  Machine 1 (Server)                   │
-│                                                       │
-│  ┌──────────────────────┐  ┌────────────────────────┐ │
-│  │  Frontend Server     │  │  Backend Server         │ │
-│  │  client/serve.py     │  │  server/server.py       │ │
-│  │  http://0.0.0.0:5000 │  │  ws://0.0.0.0:8000/ws  │ │
-│  │                      │  │                        │ │
-│  │  Serves:             │  │  ConnectionManager:    │ │
-│  │  index.html          │  │  ├─ broadcast()        │ │
-│  │  style.css           │  │  ├─ add/remove()       │ │
-│  │  app.js              │  │  └─ user tracking      │ │
-│  └──────────────────────┘  └────────────────────────┘ │
-└───────────────┬──────────────────────┬────────────────┘
-                │                      │
-         HTTP :5000              WS :8000/ws
-                │                      │
-        ┌───────┴───────┐      ┌───────┴───────┐
-        │   Browser 1   │      │   Browser 2   │  ...
-        │   (Client)    │      │   (Client)    │
-        └───────────────┘      └───────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    Machine 1 (Server)                        │
+│                                                              │
+│  ┌─────────────────────┐   ┌──────────────────────────────┐  │
+│  │  Frontend Server    │   │  Backend Server (FastAPI)    │  │
+│  │  client/serve.py    │   │  server/server.py            │  │
+│  │  http://0.0.0.0:5000│   │  ws://0.0.0.0:8000/ws        │  │
+│  │                     │   │  POST /upload                │  │
+│  │  Serves:            │   │  GET  /uploads/<file>        │  │
+│  │  index.html         │   │                              │  │
+│  │  style.css          │   │  ConnectionManager:          │  │
+│  │  app.js             │   │  ├─ broadcast()              │  │
+│  │  sounds/            │   │  ├─ add / remove()           │  │
+│  └─────────────────────┘   │  ├─ message history (50)     │  │
+│                            │  └─ cleanup timer (60 s)     │  │
+│                            └──────────────────────────────┘  │
+└────────────────┬───────────────────────┬─────────────────────┘
+                 │                       │
+          HTTP :5000              WS :8000/ws
+          (static files)         (chat + uploads)
+                 │                       │
+        ┌────────┴────────┐     ┌────────┴────────┐
+        │   Browser 1     │     │   Browser 2     │  ...
+        │   (Player)      │     │   (Player)      │
+        └─────────────────┘     └─────────────────┘
 ```
 
 ---
 
-## Message Protocol
+## Gamification System
 
-All messages are JSON with a `type` field:
+| Mechanic      | Detail                                                   |
+|---------------|----------------------------------------------------------|
+| **XP**        | +2 per message sent · +5 on seeing someone join · +1/min passive |
+| **Streak**    | Increments every message; every 5th streak grants +10 XP |
+| **Ranks**     | Newbie (0) → Squire (50) → Knight (150) → Champion (320) → Warlord (600) → Legend (1000) |
+| **Level-up**  | Animated toast + 8-bit ascending chime                   |
+| **Stats**     | Messages sent, current streak, session time (all shown in sidebar) |
+
+---
+
+## Message Receipt System
+
+Each message sent shows an emoji receipt that updates once the server confirms delivery:
+
+| Emoji | Status        | Meaning                                      |
+|-------|---------------|----------------------------------------------|
+| 😴    | `sent`        | Reached the server; no other players online  |
+| 😃    | `partial`     | Delivered to some players, but not all       |
+| 😎    | `delivered_all` | All players in the room received it        |
+
+The ⓘ button in the chat header opens an in-app modal explaining these receipts.
+
+---
+
+## File Attachment Support
+
+Files are uploaded to the backend via `POST /upload` before sending. The resulting URL is embedded in the message payload.
+
+| File Type     | Rendering                            |
+|---------------|--------------------------------------|
+| `image/*`     | Inline thumbnail (click to full view)|
+| `video/*`     | Inline `<video>` player              |
+| `audio/*`     | Inline `<audio>` player              |
+| PDF / Word / ZIP / other | Download card with icon and file size |
+
+---
+
+## WebSocket Message Protocol
+
+All messages are JSON with a `type` field.
 
 ### Client → Server
-| Type      | Fields     | Description              |
-|-----------|------------|--------------------------|
-| `join`    | `username` | Register with a username |
-| `message` | `text`     | Send a chat message      |
-| `typing`  | —          | Signal that user is typing |
+
+| Type      | Fields                                      | Description                        |
+|-----------|---------------------------------------------|------------------------------------|
+| `join`    | `username`, `avatar`                        | Register with a username & avatar  |
+| `message` | `text`, `client_msg_id`, `attachment`       | Send a chat message (+ optional file) |
+| `typing`  | —                                           | Signal that the user is typing     |
 
 ### Server → Client
-| Type       | Fields                             | Description                   |
-|------------|------------------------------------|-------------------------------|
-| `system`   | `message`, `timestamp`             | System notification           |
-| `join`     | `username`, `message`, `timestamp` | User joined notification      |
-| `leave`    | `username`, `message`, `timestamp` | User left notification        |
-| `message`  | `username`, `text`, `timestamp`    | Chat message broadcast        |
-| `userList` | `users`                            | Current online users list     |
-| `history`  | `messages`                         | Recent message history        |
-| `error`    | `message`                          | Error (e.g., username taken)  |
+
+| Type          | Fields                                            | Description                          |
+|---------------|---------------------------------------------------|--------------------------------------|
+| `system`      | `message`, `timestamp`                            | System notification (e.g. welcome)   |
+| `join`        | `username`, `avatar`, `message`, `timestamp`      | User joined                          |
+| `leave`       | `username`, `message`, `timestamp`                | User left                            |
+| `message`     | `username`, `avatar`, `text`, `attachment`, `timestamp` | Broadcast chat message         |
+| `receipt`     | `msg_id`, `status`                                | Delivery confirmation for a sent message |
+| `userList`    | `users` (list of `{username, avatar}`)            | Current online players               |
+| `history`     | `messages`                                        | Last ≤50 messages for new joiners    |
+| `typing`      | `username`                                        | Another player is typing             |
+| `error`       | `message`                                         | Error (e.g., username already taken) |
 
 ---
 
 ## Team
 
-| Member | Role |
-|--------|------|
-| Member 1 | Group Head / Backend |
-| Member 2 | Frontend |
-| Member 3 | Testing |
-| Member 4 | Documentation |
+| Member   | Role                    |
+|----------|-------------------------|
+| Member 1 | Group Head / Backend    |
+| Member 2 | Frontend                |
+| Member 3 | Testing                 |
+| Member 4 | Documentation           |
