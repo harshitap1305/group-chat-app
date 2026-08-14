@@ -1,44 +1,41 @@
 /**
- * PixelChat — WebSocket Client (8-bit Gamified)
- * ==============================================
- * Handles WebSocket connection, message rendering,
- * XP / rank / streak / session gamification.
+ * PixelChat — WebSocket Client
  */
 
 // ── Config ───────────────────────────────────────────────────────
-const WS_PROTOCOL  = window.location.protocol === "https:" ? "wss:" : "ws:";
+const WS_PROTOCOL = window.location.protocol === "https:" ? "wss:" : "ws:";
 const HTTP_PROTOCOL = window.location.protocol === "https:" ? "https:" : "http:";
-const BACKEND_PORT  = 8000;  // Defined in root .env (BACKEND_PORT)
-const BACKEND_HOST  = `${window.location.hostname}:${BACKEND_PORT}`;
-const SERVER_URL    = `${WS_PROTOCOL}//${BACKEND_HOST}/ws`;
-const UPLOAD_URL    = `${HTTP_PROTOCOL}//${BACKEND_HOST}/upload`;
+const BACKEND_PORT = 8000;  // Defined in root .env (BACKEND_PORT)
+const BACKEND_HOST = `${window.location.hostname}:${BACKEND_PORT}`;
+const SERVER_URL = `${WS_PROTOCOL}//${BACKEND_HOST}/ws`;
+const UPLOAD_URL = `${HTTP_PROTOCOL}//${BACKEND_HOST}/upload`;
 // ── Sounds ───────────────────────────────────────────────────────
 const SOUNDS = {
-    join: new Audio("/static/sounds/mushroom.mp3"),   // mushroom_mario  — someone joins
-    message: new Audio("/static/sounds/coin.mp3"),       // mario_coin      — new message
-    leave: new Audio("/static/sounds/pipe.mp3"),       // mario_bros_pipe — someone leaves
+    join: new Audio("/static/sounds/mushroom.mp3"),   // someone joins
+    message: new Audio("/static/sounds/coin.mp3"),    // new message
+    leave: new Audio("/static/sounds/pipe.mp3"),      // someone leaves
 };
-// Pre-load clips so first play is instant
+
 Object.values(SOUNDS).forEach(a => { a.preload = "auto"; a.volume = 0.5; });
 
 function playSound(name) {
     const clip = SOUNDS[name];
     if (!clip) return;
     clip.currentTime = 0;
-    clip.play().catch(() => { });   // silently ignore if browser blocks autoplay
+    clip.play().catch(() => { });
 }
 
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY = 10000;
 
-// Avatar bg colors — all derived from #778873 / #A1BC98 palette
+// Avatar bg colors
 const AVATAR_COLORS = [
     "#778873", "#A1BC98", "#546058", "#8aab88",
     "#6a8068", "#c8dcc5", "#4a6050", "#9abca0",
     "#667860", "#b0ccb0", "#506858", "#7a9878",
 ];
 
-// Predefined Avatars (Google Profile / Retro Badges)
+// Predefined Avatars
 const AVATARS = [
     { id: "wizard", name: "WIZARD", icon: "🧙‍♂️", bg: "#4a6050", border: "#A1BC98" },
     { id: "robot", name: "ROBOT", icon: "🤖", bg: "#384d54", border: "#729fa8" },
@@ -125,20 +122,20 @@ let sessionStart = null;
 let sessionTimer = null;
 let currentLevel = 1;
 
-// Receipt tracking — maps client_msg_id → receipt <span> DOM element
+// Receipt tracking: maps client_msg_id -> receipt <span> DOM element
 const pendingReceipts = new Map();
 
 // Attachment state
-let attachmentData = null;   // { url, fileName, fileType, fileSize } or null
-let pendingFile    = null;   // File object waiting to be uploaded
+let attachmentData = null;
+let pendingFile = null;
 
 function clearPendingAttachment() {
     attachmentData = null;
-    pendingFile    = null;
+    pendingFile = null;
     if (attachmentPreviewBar) attachmentPreviewBar.classList.add("hidden");
-    if (attachmentFilename)   attachmentFilename.textContent = "";
-    if (attachmentFilesize)   attachmentFilesize.textContent = "";
-    if (fileInput)            fileInput.value = "";
+    if (attachmentFilename) attachmentFilename.textContent = "";
+    if (attachmentFilesize) attachmentFilesize.textContent = "";
+    if (fileInput) fileInput.value = "";
 }
 
 function formatBytes(bytes) {
@@ -150,9 +147,9 @@ function formatBytes(bytes) {
 }
 
 function getFileIcon(fileType, fileName) {
-    if (fileType.includes("pdf"))   return "📄";
+    if (fileType.includes("pdf")) return "📄";
     if (fileType.includes("word") || fileName.endsWith(".docx") || fileName.endsWith(".doc")) return "📝";
-    if (fileType.includes("zip") || fileType.includes("rar") || fileType.includes("7z"))   return "🗜️";
+    if (fileType.includes("zip") || fileType.includes("rar") || fileType.includes("7z")) return "🗜️";
     if (fileType.includes("text") || fileName.endsWith(".txt")) return "🗒️";
     if (fileType.includes("spreadsheet") || fileName.endsWith(".xlsx") || fileName.endsWith(".csv")) return "📊";
     return "📁";
@@ -270,7 +267,6 @@ function handleMessage(data) {
             break;
 
         case "message":
-            // Own messages are rendered optimistically on send — skip the echo
             if (data.username === currentUsername) break;
             addChatMessage(data.username, data.text, data.timestamp, data.avatar, data.attachment);
             hideTypingIndicator(data.username);
@@ -391,11 +387,6 @@ function addChatMessage(username, text, time, avatarId = "wizard", attachment = 
     scrollToBottom();
 }
 
-/**
- * Render the sender's own message immediately (before server echo),
- * with a 😴 receipt emoji. Stores a reference in pendingReceipts so
- * the emoji can be upgraded when the server sends a receipt event.
- */
 function addOwnMessageOptimistic(text, msgId, attachment = null) {
     const avatarData = getAvatarData(selectedAvatar, currentUsername);
     const el = document.createElement("div");
@@ -406,10 +397,10 @@ function addOwnMessageOptimistic(text, msgId, attachment = null) {
             <span>${avatarData.icon}</span>
         </div>`;
 
-    // Build attachment HTML (mirrors addChatMessage logic)
+    // Build attachment HTML
     let attachmentHtml = "";
     if (attachment && attachment.url) {
-        const fileUrl  = escapeHtml(attachment.url);
+        const fileUrl = escapeHtml(attachment.url);
         const fileName = escapeHtml(attachment.fileName || "attachment");
         const fileType = (attachment.fileType || "").toLowerCase();
         const fileSize = formatBytes(attachment.fileSize || 0);
@@ -444,10 +435,7 @@ function addOwnMessageOptimistic(text, msgId, attachment = null) {
 }
 
 /**
- * Upgrade the receipt emoji on a sent bubble based on server confirmation.
- *   sent          → 😴  (no other users online)
- *   partial       → 😃  (some users received it)
- *   delivered_all → 😎  (all users received it)
+ * Upgrade the receipt emoji on a sent bubble based on server confirmation
  */
 function updateReceipt(msgId, status) {
     const el = pendingReceipts.get(msgId);
@@ -461,7 +449,6 @@ function updateReceipt(msgId, status) {
         el.title = "Delivered to all";
         el.classList.add("receipt-delivered");
     }
-    // "sent" keeps 😴 — no change needed
     pendingReceipts.delete(msgId);
 }
 
@@ -508,7 +495,7 @@ function showChatScreen() {
     chatScreen.classList.remove("hidden");
     messageInput.focus();
     startSessionTimer();
-    playSound("join");  // play mushroom sound when you yourself join
+    playSound("join");
 }
 
 function scrollToBottom() {
@@ -648,7 +635,7 @@ function getAvatarColor(username) {
 
 /** Returns the current wall-clock time as HH:MM:SS (matches server format). */
 function currentTime() {
-    return new Date().toLocaleTimeString("en-GB"); // 24h HH:MM:SS
+    return new Date().toLocaleTimeString("en-GB");
 }
 
 function sendMessage() {
@@ -664,10 +651,8 @@ function sendMessage() {
             client_msg_id: msgId,
             attachment: attachmentData || null
         }));
-        playSound("message");  // coin sound for sender too
-        // Snapshot attachment before clearPendingAttachment() nulls it
+        playSound("message");
         const attachmentSnapshot = attachmentData || null;
-        // Render immediately (optimistic) — server echo will be suppressed
         addOwnMessageOptimistic(text, msgId, attachmentSnapshot);
         messageInput.value = "";
         clearPendingAttachment();
@@ -697,7 +682,7 @@ function playNotificationSound() {
 function playLevelUpSound() {
     try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const notes = [262, 330, 392, 523];  // C4 E4 G4 C5 — 8-bit fanfare
+        const notes = [262, 330, 392, 523];
         notes.forEach((freq, i) => {
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
@@ -775,7 +760,7 @@ if (attachmentToggleBtn && fileInput) {
         attachmentFilename.textContent = pendingFile.name;
         attachmentFilesize.textContent = "(UPLOADING...)";
         attachmentPreviewBar.classList.remove("hidden");
-        attachmentData = null;  // clear any previous upload
+        attachmentData = null;
 
         // Upload the file to the server
         try {
@@ -783,9 +768,7 @@ if (attachmentToggleBtn && fileInput) {
             formData.append("file", pendingFile);
             const res = await fetch(UPLOAD_URL, { method: "POST", body: formData });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            attachmentData = await res.json();  // { url, fileName, fileType, fileSize }
-            // Absolutize the URL — /uploads/... is served from the backend port,
-            // not the frontend port, so other clients need the full address.
+            attachmentData = await res.json();
             if (attachmentData.url && attachmentData.url.startsWith("/")) {
                 attachmentData.url = `${HTTP_PROTOCOL}//${BACKEND_HOST}${attachmentData.url}`;
             }
@@ -841,7 +824,7 @@ leaveBtn.addEventListener("click", () => {
 function leaveChat() {
     // Stop session timer
     if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
-    playSound("leave");  // play pipe sound when you yourself leave
+    playSound("leave");
     // Close WebSocket
     disconnect();
     // Reset gamification state
@@ -872,6 +855,5 @@ function leaveChat() {
 window.addEventListener("load", () => {
     usernameInput.focus();
     renderAvatarPicker();
-    // Init XP bar
     updateXPBar();
 });
