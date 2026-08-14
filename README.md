@@ -239,12 +239,3 @@ All messages are JSON with a `type` field.
 | `error`       | `message`                                         | Error (e.g., username already taken) |
 
 ---
-
-## Team
-
-| Member   | Role                    |
-|----------|-------------------------|
-| Member 1 | Group Head / Backend    |
-| Member 2 | Frontend                |
-| Member 3 | Testing                 |
-| Member 4 | Documentation           |
