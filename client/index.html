@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
 
@@ -30,47 +30,64 @@
                 <div class="title-sub">[ GROUP QUEST v1.0 ]</div>
             </div>
 
-            <!-- Stats row -->
-            <div class="stat-row">
-                <div class="stat-box">
-                    <div class="stat-num" id="stat-players">?</div>
-                    <div class="stat-lbl">PLAYERS</div>
-                </div>
-                <div class="stat-divider">|</div>
-                <div class="stat-box">
-                    <div class="stat-num green">LIVE</div>
-                    <div class="stat-lbl">STATUS</div>
-                </div>
-                <div class="stat-divider">|</div>
-                <div class="stat-box">
-                    <div class="stat-num crimson">S1</div>
-                    <div class="stat-lbl">SEASON</div>
-                </div>
-            </div>
-
             <!-- Login card -->
             <div class="pixel-card">
-                <div class="pixel-card-title">▸ CHOOSE YOUR AVATAR</div>
-                <div class="avatar-picker-grid" id="avatar-picker-grid">
-                    <!-- Dynamically rendered by app.js -->
+
+                <!-- Tab switcher -->
+                <div class="auth-tabs">
+                    <button class="auth-tab active" id="tab-register" onclick="switchTab('register')">▸ SIGN UP</button>
+                    <button class="auth-tab" id="tab-login" onclick="switchTab('login')">▸ LOGIN</button>
                 </div>
 
-                <div class="pixel-card-title" style="margin-top: 14px;">▸ ENTER YOUR NAME</div>
-                <div class="pixel-input-wrap">
-                    <span class="input-prompt">_</span>
-                    <input
-                        type="text"
-                        id="username-input"
-                        class="pixel-input"
-                        placeholder="HERO_NAME"
-                        maxlength="20"
-                        autocomplete="off"
-                        spellcheck="false"
-                    >
+                <!-- ── CREATE ACCOUNT tab ── -->
+                <div id="panel-register">
+                    <div class="pixel-card-title" style="margin-top:12px;">▸ CHOOSE YOUR AVATAR</div>
+                    <div class="avatar-picker-grid" id="avatar-picker-grid">
+                        <!-- Dynamically rendered by app.js -->
+                    </div>
+
+                    <div class="pixel-card-title" style="margin-top:14px;">▸ USERNAME</div>
+                    <div class="pixel-input-wrap">
+                        <span class="input-prompt">_</span>
+                        <input type="text" id="reg-username" class="pixel-input"
+                            placeholder="HERO_NAME" maxlength="20"
+                            autocomplete="off" spellcheck="false">
+                    </div>
+
+                    <div class="pixel-card-title" style="margin-top:10px;">▸ PASSWORD</div>
+                    <div class="pixel-input-wrap">
+                        <span class="input-prompt">*</span>
+                        <input type="password" id="reg-password" class="pixel-input"
+                            placeholder="MIN 4 CHARS" autocomplete="new-password">
+                    </div>
+
+                    <button id="register-btn" class="pixel-btn pixel-btn--primary" style="margin-top:14px;">
+                        <span id="register-btn-text">► SIGN UP</span>
+                    </button>
                 </div>
-                <button id="join-btn" class="pixel-btn pixel-btn--primary">
-                    <span id="join-btn-text">► START QUEST</span>
-                </button>
+
+                <!-- ── LOGIN tab ── -->
+                <div id="panel-login" class="hidden">
+                    <div class="pixel-card-title" style="margin-top:12px;">▸ USERNAME</div>
+                    <div class="pixel-input-wrap">
+                        <span class="input-prompt">_</span>
+                        <input type="text" id="login-username" class="pixel-input"
+                            placeholder="HERO_NAME" maxlength="20"
+                            autocomplete="username" spellcheck="false">
+                    </div>
+
+                    <div class="pixel-card-title" style="margin-top:10px;">▸ PASSWORD</div>
+                    <div class="pixel-input-wrap">
+                        <span class="input-prompt">*</span>
+                        <input type="password" id="login-password" class="pixel-input"
+                            placeholder="YOUR PASSWORD" autocomplete="current-password">
+                    </div>
+
+                    <button id="login-btn" class="pixel-btn pixel-btn--primary" style="margin-top:14px;">
+                        <span id="login-btn-text">► LOGIN</span>
+                    </button>
+                </div>
+
                 <p id="login-error" class="pixel-error"></p>
             </div>
 
@@ -312,6 +329,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=2"></script>
 </body>
 </html>

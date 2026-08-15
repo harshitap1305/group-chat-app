@@ -107,6 +107,7 @@ let reconnectAttempts = 0;
 let reconnectTimer    = null;
 let isIntentionalClose = false;
 let isJoined          = false;
+let sessionToken      = null;
 let typingTimeout     = null;
 let lastTypingSent    = 0;
 let isTabFocused      = true;
@@ -302,10 +303,45 @@ function setCryptoStatusUI(ready) {
 // ── DOM ───────────────────────────────────────────────────────────────────────
 const loginScreen       = document.getElementById("login-screen");
 const chatScreen        = document.getElementById("chat-screen");
-const usernameInput     = document.getElementById("username-input");
-const joinBtn           = document.getElementById("join-btn");
-const joinBtnText       = document.getElementById("join-btn-text");
+
+// Auth DOM
+const tabRegister       = document.getElementById("tab-register");
+const tabLogin          = document.getElementById("tab-login");
+const panelRegister     = document.getElementById("panel-register");
+const panelLogin        = document.getElementById("panel-login");
+
+const regUsername       = document.getElementById("reg-username");
+const regPassword       = document.getElementById("reg-password");
+const registerBtn       = document.getElementById("register-btn");
+const registerBtnText   = document.getElementById("register-btn-text");
+
+const loginUsername     = document.getElementById("login-username");
+const loginPassword     = document.getElementById("login-password");
+const loginBtn          = document.getElementById("login-btn");
+const loginBtnText      = document.getElementById("login-btn-text");
+
 const loginError        = document.getElementById("login-error");
+
+function switchTab(tab) {
+    loginError.textContent = "";
+    if (tab === "register") {
+        tabRegister.classList.add("active");
+        tabLogin.classList.remove("active");
+        panelRegister.classList.remove("hidden");
+        panelLogin.classList.add("hidden");
+        regUsername.focus();
+    } else {
+        tabLogin.classList.add("active");
+        tabRegister.classList.remove("active");
+        panelLogin.classList.remove("hidden");
+        panelRegister.classList.add("hidden");
+        loginUsername.focus();
+    }
+}
+
+// Global scope for onclick
+window.switchTab = switchTab;
+
 const messagesScroll    = document.getElementById("messages-scroll");
 const messageInput      = document.getElementById("message-input");
 const sendBtn           = document.getElementById("send-btn");
@@ -349,11 +385,10 @@ function connect() {
     ws.onopen = () => {
         reconnectAttempts = 0;
         updateConnectionStatus("connected");
-        // Send join with ECDSA public key
+        // Send join with one-time token and ECDSA public key
         ws.send(JSON.stringify({
             type:       "join",
-            username:   currentUsername,
-            avatar:     selectedAvatar,
+            token:      sessionToken,
             public_key: myPublicKeyJwk,
         }));
     };
@@ -842,29 +877,72 @@ function playLevelUpSound() {
 
 // ── Event Listeners ───────────────────────────────────────────────────────────
 
-joinBtn.addEventListener("click", async () => {
-    const username = usernameInput.value.trim();
-    if (!username) { showLoginError("ENTER A NAME FIRST!"); return; }
+async function authenticate(mode) {
+    let username, password, btn, btnText, originalText, endpoint, payload;
 
-    loginError.textContent  = "";
-    joinBtn.disabled        = true;
-    joinBtnText.textContent = "LOADING CRYPTO...";
-
-    try {
-        await initCrypto();
-    } catch (err) {
-        showLoginError("CRYPTO INIT FAILED — check console");
-        return;
+    if (mode === "register") {
+        username = regUsername.value.trim();
+        password = regPassword.value;
+        btn = registerBtn;
+        btnText = registerBtnText;
+        originalText = "► CREATE ACCOUNT";
+        endpoint = "/register";
+        payload = { username, password, avatar: selectedAvatar };
+        if (!username) { showLoginError("ENTER A NAME!"); return; }
+        if (password.length < 4) { showLoginError("PASSWORD TOO SHORT!"); return; }
+    } else {
+        username = loginUsername.value.trim();
+        password = loginPassword.value;
+        btn = loginBtn;
+        btnText = loginBtnText;
+        originalText = "► LOGIN";
+        endpoint = "/login";
+        payload = { username, password };
+        if (!username || !password) { showLoginError("ENTER CREDENTIALS!"); return; }
     }
 
-    joinBtnText.textContent = "CONNECTING...";
-    currentUsername  = username;
-    isIntentionalClose = false;
-    isJoined         = false;
-    connect();
-});
+    loginError.textContent = "";
+    btn.disabled = true;
+    btnText.textContent = "AUTHENTICATING...";
 
-usernameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") joinBtn.click(); });
+    try {
+        const res = await fetch(`${HTTP_PROTOCOL}//${BACKEND_HOST}${endpoint}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.detail || "Authentication failed");
+        }
+
+        sessionToken = data.token;
+        currentUsername = username;
+        selectedAvatar = data.avatar;
+
+        btnText.textContent = "LOADING CRYPTO...";
+        await initCrypto();
+
+        btnText.textContent = "CONNECTING...";
+        isIntentionalClose = false;
+        isJoined = false;
+        connect();
+
+    } catch (err) {
+        showLoginError(err.message);
+        btnText.textContent = originalText;
+        btn.disabled = false;
+    }
+}
+
+registerBtn.addEventListener("click", () => authenticate("register"));
+loginBtn.addEventListener("click", () => authenticate("login"));
+
+regUsername.addEventListener("keydown", (e) => { if (e.key === "Enter") regPassword.focus(); });
+regPassword.addEventListener("keydown", (e) => { if (e.key === "Enter") registerBtn.click(); });
+loginUsername.addEventListener("keydown", (e) => { if (e.key === "Enter") loginPassword.focus(); });
+loginPassword.addEventListener("keydown", (e) => { if (e.key === "Enter") loginBtn.click(); });
 sendBtn.addEventListener("click", sendMessage);
 
 messageInput.addEventListener("keydown", (e) => {
@@ -960,18 +1038,20 @@ function leaveChat() {
     setCryptoStatusUI(false);
     // Clear UI
     messagesScroll.innerHTML = "";
-    currentUsername = ""; isJoined = false; isIntentionalClose = false;
-    joinBtn.disabled = false; joinBtnText.textContent = "► START QUEST";
+    currentUsername = ""; isJoined = false; isIntentionalClose = false; sessionToken = null;
+    registerBtn.disabled = false; registerBtnText.textContent = "► SIGN UP";
+    loginBtn.disabled = false; loginBtnText.textContent = "► LOGIN";
     loginError.textContent = "";
     chatScreen.classList.add("hidden");
     loginScreen.classList.remove("hidden");
-    usernameInput.value = "";
-    usernameInput.focus();
+    regPassword.value = "";
+    loginPassword.value = "";
+    switchTab("register");
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener("load", () => {
-    usernameInput.focus();
+    regUsername.focus();
     renderAvatarPicker();
     updateXPBar();
     setCryptoStatusUI(false); // shown as inactive until join
