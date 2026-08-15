@@ -23,5 +23,6 @@ venv.bak/
 .DS_Store
 Thumbs.db
 
-# Server uploads
+# Server uploads & database
 server/uploads/
+server/chat.db
