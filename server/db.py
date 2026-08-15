@@ -185,3 +185,7 @@ def get_user_key(username: str) -> dict | None:
             "SELECT public_key FROM user_keys WHERE username = ?", (username,)
         ).fetchone()
     return json.loads(row["public_key"]) if row else None
+
+
+
+

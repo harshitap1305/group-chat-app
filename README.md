@@ -158,7 +158,7 @@ The client automatically connects to `ws://localhost:5000/ws` using `window.loca
 │  │  app.js             │   │  ├─ broadcast()              │  │
 │  │  sounds/            │   │  ├─ add / remove()           │  │
 │  └─────────────────────┘   │  ├─ message history (50)     │  │
-│                            │  └─ cleanup timer (60 s)     │  │
+│                            │  └─ cleanup timer (300 s)     │  │
 │                            └──────────────────────────────┘  │
 └────────────────┬───────────────────────┬─────────────────────┘
                  │                       │

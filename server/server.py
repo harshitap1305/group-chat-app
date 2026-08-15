@@ -177,12 +177,15 @@ app.add_middleware(
 )
 
 FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 3000))
+CLEANUP_TIMEOUT = int(os.environ.get("CLEANUP_TIMEOUT", 300))  # 300s (5 minutes) timeout for clearing message history after room empties
+cleanup_task: asyncio.Task | None = None
 
 
 @app.on_event("startup")
 async def startup():
     """Initialise the SQLite database on server start."""
     db.init_db()
+
 
 
 # ── REST Endpoints ────────────────────────────────────────────────────────────
@@ -273,6 +276,12 @@ async def websocket_endpoint(websocket: WebSocket):
             return
 
         # ── Register user ────────────────────────────────────────────────
+        global cleanup_task
+        if cleanup_task and not cleanup_task.done():
+            cleanup_task.cancel()
+            cleanup_task = None
+            print("[*] User joined — cancelled room history cleanup timer.")
+
         manager.add(websocket, username, avatar)
         db.register_user_key(username, pub_key)
         print(f"[+] {username} ({avatar}) joined | Online: {len(manager.active_connections)}")
@@ -398,6 +407,21 @@ async def websocket_endpoint(websocket: WebSocket):
             manager.remove(websocket)
             online = len(manager.active_connections)
             print(f"[-] {username} left | Online: {online}")
+
+            if online == 0:
+                async def _empty_room_cleanup():
+                    try:
+                        await asyncio.sleep(CLEANUP_TIMEOUT)
+                        if len(manager.active_connections) == 0:
+                            db.clear_history()
+                            print(f"[!] Room empty for {CLEANUP_TIMEOUT}s — message history auto-cleared.")
+                    except asyncio.CancelledError:
+                        pass
+
+                if cleanup_task and not cleanup_task.done():
+                    cleanup_task.cancel()
+                cleanup_task = asyncio.create_task(_empty_room_cleanup())
+                print(f"[*] Room is empty — scheduled {CLEANUP_TIMEOUT}s history cleanup timer.")
 
             await manager.broadcast({
                 "type":     "leave",
