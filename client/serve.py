@@ -32,6 +32,12 @@ if __name__ == "__main__":
 
     print("=" * 50)
     print("  Frontend Server")
-    print(f"  URL: http://localhost:{FRONTEND_PORT}")
+    print(f"  URL: https://localhost:{FRONTEND_PORT}")
     print("=" * 50)
-    uvicorn.run(app, host="0.0.0.0", port=FRONTEND_PORT)
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=FRONTEND_PORT,
+        ssl_keyfile="../key.pem",
+        ssl_certfile="../cert.pem"
+    )

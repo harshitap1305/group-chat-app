@@ -444,8 +444,14 @@ if __name__ == "__main__":
 
     print("=" * 50)
     print("  Secure Group Chat Server")
-    print(f"  WebSocket : ws://0.0.0.0:{port}/ws")
-    print(f"  Group Key : GET http://0.0.0.0:{port}/group-key")
-    print(f"  Frontend  : http://localhost:{FRONTEND_PORT}")
+    print(f"  WebSocket : wss://0.0.0.0:{port}/ws")
+    print(f"  Group Key : GET https://0.0.0.0:{port}/group-key")
+    print(f"  Frontend  : https://localhost:{FRONTEND_PORT}")
     print("=" * 50)
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        ssl_keyfile="../key.pem",
+        ssl_certfile="../cert.pem"
+    )

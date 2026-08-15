@@ -187,5 +187,13 @@ def get_user_key(username: str) -> dict | None:
     return json.loads(row["public_key"]) if row else None
 
 
+def clear_history() -> None:
+    """Delete all messages and user keys. Called when the room has been empty for a while."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM messages")
+        conn.execute("DELETE FROM user_keys")
+    print("[DB] Message history and user keys cleared.")
+
+
 
 
