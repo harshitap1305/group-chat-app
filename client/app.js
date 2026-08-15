@@ -18,6 +18,7 @@ const SOUNDS = {
     join:    new Audio("/static/sounds/mushroom.mp3"),
     message: new Audio("/static/sounds/coin.mp3"),
     leave:   new Audio("/static/sounds/pipe.mp3"),
+    start:   new Audio("/static/sounds/mario_start.mp3"),
 };
 Object.values(SOUNDS).forEach(a => { a.preload = "auto"; a.volume = 0.5; });
 
@@ -52,7 +53,19 @@ const AVATARS = [
     { id:"lion",      name:"LION",     icon:"🦁",   bg:"#594924", border:"#ad914e" },
 ];
 
-let selectedAvatar = "wizard";
+const ROOM_AVATARS = [
+    { icon: "🏰", name: "CASTLE" },
+    { icon: "🌋", name: "VOLCANO" },
+    { icon: "🗺️", name: "MAP" },
+    { icon: "⚔️", name: "ARENA" },
+    { icon: "🎮", name: "ARCADE" },
+    { icon: "🔮", name: "TAVERN" },
+    { icon: "🛡️", name: "ARMORY" },
+    { icon: "🌙", name: "NIGHT" }
+];
+
+let selectedAvatar = AVATARS[0].id;
+let selectedRoomAvatar = ROOM_AVATARS[0].icon;
 
 function getAvatarData(avatarId, username = "") {
     const found = AVATARS.find(a => a.id === avatarId);
@@ -71,22 +84,39 @@ function renderAvatarPicker() {
     if (!grid) return;
     grid.innerHTML = "";
     AVATARS.forEach(av => {
-        const item = document.createElement("div");
-        item.className = `avatar-option ${av.id === selectedAvatar ? "selected" : ""}`;
-        item.dataset.id = av.id;
-        item.style.backgroundColor = av.bg;
-        item.style.borderColor = av.border;
-        item.title = av.name;
-        item.innerHTML = `
+        const btn = document.createElement("div");
+        btn.className = `avatar-option ${av.id === selectedAvatar ? "selected" : ""}`;
+        btn.style.backgroundColor = av.bg;
+        btn.style.borderColor = av.border;
+        btn.title = av.name;
+        btn.innerHTML = `
             <span class="avatar-option-icon">${av.icon}</span>
             <span class="avatar-option-name">${av.name}</span>
         `;
-        item.addEventListener("click", () => {
+        btn.addEventListener("click", () => {
             selectedAvatar = av.id;
-            document.querySelectorAll(".avatar-option").forEach(el => el.classList.remove("selected"));
-            item.classList.add("selected");
+            Array.from(grid.children).forEach(c => c.classList.remove("selected"));
+            btn.classList.add("selected");
         });
-        grid.appendChild(item);
+        grid.appendChild(btn);
+    });
+}
+
+function renderRoomAvatarPicker() {
+    if (!roomAvatarPickerGrid) return;
+    roomAvatarPickerGrid.innerHTML = "";
+    ROOM_AVATARS.forEach((a, i) => {
+        const btn = document.createElement("div");
+        btn.className = `avatar-option ${a.icon === selectedRoomAvatar ? "selected" : ""}`;
+        btn.innerHTML = `
+            <div class="avatar-option-icon">${a.icon}</div>
+        `;
+        btn.addEventListener("click", () => {
+            selectedRoomAvatar = a.icon;
+            Array.from(roomAvatarPickerGrid.children).forEach(c => c.classList.remove("selected"));
+            btn.classList.add("selected");
+        });
+        roomAvatarPickerGrid.appendChild(btn);
     });
 }
 
@@ -111,6 +141,14 @@ let sessionToken      = null;
 let typingTimeout     = null;
 let lastTypingSent    = 0;
 let isTabFocused      = true;
+
+// Room state
+let currentRoomId   = null;
+let currentRoomName = "";
+let currentRoomAvatar = "🏰";
+let roomListCache   = [];
+let roomPollTimer   = null;
+let isPublicRoom    = true;
 
 // Gamification
 let totalXP      = 0;
@@ -302,6 +340,7 @@ function setCryptoStatusUI(ready) {
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
 const loginScreen       = document.getElementById("login-screen");
+const lobbyScreen       = document.getElementById("lobby-screen");
 const chatScreen        = document.getElementById("chat-screen");
 
 // Auth DOM
@@ -321,6 +360,30 @@ const loginBtn          = document.getElementById("login-btn");
 const loginBtnText      = document.getElementById("login-btn-text");
 
 const loginError        = document.getElementById("login-error");
+
+// Lobby DOM
+const lobbyUsernameDisplay = document.getElementById("lobby-username-display");
+const lobbyLogoutBtn       = document.getElementById("lobby-logout-btn");
+const ltabCreate           = document.getElementById("ltab-create");
+const ltabJoin             = document.getElementById("ltab-join");
+const lpanelCreate         = document.getElementById("lpanel-create");
+const lpanelJoin           = document.getElementById("lpanel-join");
+const roomNameInput        = document.getElementById("room-name-input");
+const roomAvatarPickerGrid = document.getElementById("room-avatar-picker-grid");
+const visPublicBtn         = document.getElementById("vis-public");
+const visPrivateBtn        = document.getElementById("vis-private");
+const visibilityHint       = document.getElementById("visibility-hint");
+const createRoomBtn        = document.getElementById("create-room-btn");
+const createRoomBtnText    = document.getElementById("create-room-btn-text");
+const lobbyError           = document.getElementById("lobby-error");
+const roomCodeInput        = document.getElementById("room-code-input");
+const joinCodeBtn          = document.getElementById("join-code-btn");
+const joinCodeBtnText      = document.getElementById("join-code-btn-text");
+const joinCodeError        = document.getElementById("join-code-error");
+const roomListScroll       = document.getElementById("room-list-scroll");
+const roomListEmpty        = document.getElementById("room-list-empty");
+const roomSearchInput      = document.getElementById("room-search-input");
+const refreshRoomsBtn      = document.getElementById("refresh-rooms-btn");
 
 function switchTab(tab) {
     loginError.textContent = "";
@@ -385,11 +448,12 @@ function connect() {
     ws.onopen = () => {
         reconnectAttempts = 0;
         updateConnectionStatus("connected");
-        // Send join with one-time token and ECDSA public key
+        // Send join with one-time token, ECDSA public key, and room_id
         ws.send(JSON.stringify({
             type:       "join",
             token:      sessionToken,
             public_key: myPublicKeyJwk,
+            room_id:    currentRoomId,
         }));
     };
 
@@ -401,6 +465,7 @@ function connect() {
     ws.onclose = () => {
         updateConnectionStatus("disconnected");
         if (loginScreen && !loginScreen.classList.contains("hidden")) return;
+        if (lobbyScreen && !lobbyScreen.classList.contains("hidden")) return;
         if (!isIntentionalClose && currentUsername) scheduleReconnect();
     };
 
@@ -429,7 +494,14 @@ function handleMessage(data) {
         case "system":
             if (!isJoined && data.message && data.message.includes("Welcome")) {
                 isJoined = true;
+                // Update room info from server welcome message
+                if (data.room) {
+                    currentRoomId     = data.room.id;
+                    currentRoomName   = data.room.name;
+                    currentRoomAvatar = data.room.avatar || "🏰";
+                }
                 showChatScreen();
+                setCryptoStatusUI(cryptoReady);
             }
             addSystemMessage(data.message, data.timestamp);
             break;
@@ -472,12 +544,19 @@ function handleMessage(data) {
 
         case "error":
             if (!isJoined) {
-                showLoginError(data.message);
-                currentUsername = "";
-                joinBtn.disabled = false;
-                joinBtnText.textContent = "► START QUEST";
+                // If we're in the lobby trying to join, show error there
+                if (lobbyError && lobbyScreen && !lobbyScreen.classList.contains("hidden")) {
+                    lobbyError.textContent = "! " + (data.message || "Connection error").toUpperCase();
+                    createRoomBtn.disabled = false;
+                    createRoomBtnText.textContent = "✦ CREATE ROOM";
+                    joinCodeBtn.disabled = false;
+                    joinCodeBtnText.textContent = "⌖ JOIN ROOM";
+                } else {
+                    showLoginError(data.message);
+                }
             }
             break;
+
 
         default:
             console.warn("[WS] unknown type:", data.type);
@@ -662,7 +741,19 @@ function showLoginError(message) {
 
 function showChatScreen() {
     loginScreen.classList.add("hidden");
+    lobbyScreen.classList.add("hidden");
     chatScreen.classList.remove("hidden");
+    // Update room info in header and sidebar
+    const hdrRoomName  = document.getElementById("hdr-room-name");
+    const hdrRoomCode  = document.getElementById("hdr-room-code");
+    const hdrSprite    = document.querySelector(".hdr-sprite");
+    const badgeCode    = document.getElementById("room-badge-code");
+    const badgeName    = document.getElementById("room-badge-name");
+    if (hdrRoomName) hdrRoomName.textContent = `# ${currentRoomName.toUpperCase()}`;
+    if (hdrRoomCode) hdrRoomCode.textContent = currentRoomId || "";
+    if (hdrSprite)   hdrSprite.textContent   = currentRoomAvatar;
+    if (badgeCode)   badgeCode.textContent   = currentRoomId || "------";
+    if (badgeName)   badgeName.textContent   = currentRoomAvatar + " " + (currentRoomName || "ROOM");
     messageInput.focus();
     startSessionTimer();
     playSound("join");
@@ -924,10 +1015,11 @@ async function authenticate(mode) {
         btnText.textContent = "LOADING CRYPTO...";
         await initCrypto();
 
-        btnText.textContent = "CONNECTING...";
-        isIntentionalClose = false;
-        isJoined = false;
-        connect();
+        btnText.textContent = "ENTERING LOBBY...";
+        playSound("start");
+        showLobbyScreen();
+        btn.disabled = false;
+        btnText.textContent = originalText;
 
     } catch (err) {
         showLoginError(err.message);
@@ -1023,6 +1115,7 @@ leaveBtn.addEventListener("click", leaveChat);
 
 function leaveChat() {
     if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
+    if (roomPollTimer) { clearInterval(roomPollTimer); roomPollTimer = null; }
     playSound("leave");
     disconnect();
     // Reset gamification
@@ -1033,26 +1126,242 @@ function leaveChat() {
     if (msgCountEl) msgCountEl.textContent = "0";
     if (streakEl)   streakEl.textContent   = "0";
     if (sessionTimeEl) sessionTimeEl.textContent = "0M";
-    // Reset crypto state
-    aesKey = null; ecdsaKeyPair = null; myPublicKeyJwk = null; cryptoReady = false;
-    setCryptoStatusUI(false);
-    // Clear UI
+    // Reset room state
+    currentRoomId = null; currentRoomName = null; currentRoomAvatar = null;
+    // Clear chat UI
     messagesScroll.innerHTML = "";
-    currentUsername = ""; isJoined = false; isIntentionalClose = false; sessionToken = null;
-    registerBtn.disabled = false; registerBtnText.textContent = "► SIGN UP";
-    loginBtn.disabled = false; loginBtnText.textContent = "► LOGIN";
-    loginError.textContent = "";
+    isJoined = false; isIntentionalClose = false;
+    // Return to lobby (keep session token and crypto keys for rejoining)
     chatScreen.classList.add("hidden");
-    loginScreen.classList.remove("hidden");
-    regPassword.value = "";
-    loginPassword.value = "";
-    switchTab("register");
+    showLobbyScreen();
+}
+
+// ── Lobby Logic ────────────────────────────────────────────────────────────────
+
+function showLobbyScreen() {
+    loginScreen.classList.add("hidden");
+    chatScreen.classList.add("hidden");
+    lobbyScreen.classList.remove("hidden");
+    if (lobbyUsernameDisplay) lobbyUsernameDisplay.textContent = `▸ ${currentUsername.toUpperCase()}`;
+    loadRooms();
+    if (roomPollTimer) clearInterval(roomPollTimer);
+    roomPollTimer = setInterval(loadRooms, 6000);
+    if (roomNameInput) roomNameInput.focus();
+}
+
+function switchLobbyTab(tab) {
+    if (lobbyError) lobbyError.textContent = "";
+    if (joinCodeError) joinCodeError.textContent = "";
+    if (tab === "create") {
+        ltabCreate.classList.add("active");
+        ltabJoin.classList.remove("active");
+        lpanelCreate.classList.remove("hidden");
+        lpanelJoin.classList.add("hidden");
+        if (roomNameInput) roomNameInput.focus();
+    } else {
+        ltabJoin.classList.add("active");
+        ltabCreate.classList.remove("active");
+        lpanelJoin.classList.remove("hidden");
+        lpanelCreate.classList.add("hidden");
+        if (roomCodeInput) { roomCodeInput.value = ""; roomCodeInput.focus(); }
+    }
+}
+window.switchLobbyTab = switchLobbyTab;
+
+function setVisibility(pub) {
+    isPublicRoom = pub;
+    if (pub) {
+        visPublicBtn.classList.add("active");
+        visPrivateBtn.classList.remove("active");
+        if (visibilityHint) visibilityHint.textContent = "Appears in the browse list";
+    } else {
+        visPrivateBtn.classList.add("active");
+        visPublicBtn.classList.remove("active");
+        if (visibilityHint) visibilityHint.textContent = "Join by code only — not listed";
+    }
+}
+window.setVisibility = setVisibility;
+
+async function loadRooms() {
+    try {
+        const res = await fetch(`${HTTP_PROTOCOL}//${BACKEND_HOST}/rooms`);
+        if (!res.ok) return;
+        const data = await res.json();
+        roomListCache = data.rooms || [];
+        renderRoomList(roomSearchInput ? roomSearchInput.value.trim() : "");
+    } catch (e) {
+        console.warn("[Lobby] loadRooms failed:", e);
+    }
+}
+
+function renderRoomList(filter = "") {
+    const filtered = filter
+        ? roomListCache.filter(r =>
+            r.name.toLowerCase().includes(filter.toLowerCase()) ||
+            r.id.toLowerCase().includes(filter.toLowerCase())
+          )
+        : roomListCache;
+
+    // Clear existing cards (keep empty notice)
+    Array.from(roomListScroll.children).forEach(c => {
+        if (!c.id || c.id !== "room-list-empty") c.remove();
+    });
+
+    if (filtered.length === 0) {
+        if (roomListEmpty) roomListEmpty.style.display = "flex";
+        return;
+    }
+    if (roomListEmpty) roomListEmpty.style.display = "none";
+
+    filtered.forEach((room) => {
+        const card = document.createElement("div");
+        card.className = "room-card";
+        const icon = room.avatar || "🏰";
+        const onlineDot = room.online > 0
+            ? `<span class="blink-dot-sm"></span> ${room.online} online`
+            : `0 online`;
+        card.innerHTML = `
+            <div class="room-card-icon">${icon}</div>
+            <div class="room-card-body">
+                <div class="room-card-name">${escapeHtml(room.name)}</div>
+                <div class="room-card-meta">
+                    <span class="room-code-badge">${escapeHtml(room.id)}</span>
+                    <span class="room-player-count">${onlineDot}</span>
+                </div>
+            </div>
+            <button class="room-card-join-btn" data-room-id="${escapeHtml(room.id)}" data-room-name="${escapeHtml(room.name)}">► JOIN</button>
+        `;
+        roomListScroll.appendChild(card);
+    });
+}
+
+async function createRoomAction() {
+    const name = roomNameInput ? roomNameInput.value.trim() : "";
+    if (!name) { if (lobbyError) lobbyError.textContent = "! ENTER A ROOM NAME"; return; }
+    if (lobbyError) lobbyError.textContent = "";
+    createRoomBtn.disabled = true;
+    createRoomBtnText.textContent = "CREATING...";
+    try {
+        const res = await fetch(`${HTTP_PROTOCOL}//${BACKEND_HOST}/rooms`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, is_public: isPublicRoom, avatar: selectedRoomAvatar }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed to create room");
+        await joinRoom(data.room_id, data.name);
+    } catch (err) {
+        if (lobbyError) lobbyError.textContent = "! " + err.message.toUpperCase();
+        createRoomBtn.disabled = false;
+        createRoomBtnText.textContent = "✦ CREATE ROOM";
+    }
+}
+
+async function joinRoomByCode() {
+    const code = roomCodeInput ? roomCodeInput.value.trim().toUpperCase() : "";
+    if (!code || code.length !== 6) {
+        if (joinCodeError) joinCodeError.textContent = "! CODE MUST BE 6 CHARACTERS";
+        return;
+    }
+    if (joinCodeError) joinCodeError.textContent = "";
+    joinCodeBtn.disabled = true;
+    joinCodeBtnText.textContent = "CHECKING...";
+    try {
+        const res = await fetch(`${HTTP_PROTOCOL}//${BACKEND_HOST}/rooms/${code}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Room not found");
+        await joinRoom(data.id, data.name);
+    } catch (err) {
+        if (joinCodeError) joinCodeError.textContent = "! " + err.message.toUpperCase();
+        joinCodeBtn.disabled = false;
+        joinCodeBtnText.textContent = "⌖ JOIN ROOM";
+    }
+}
+
+async function joinRoom(roomId, roomName) {
+    if (roomPollTimer) { clearInterval(roomPollTimer); roomPollTimer = null; }
+    currentRoomId   = roomId;
+    currentRoomName = roomName;
+    // Always refresh the one-time session token before joining via WebSocket
+    try {
+        const res = await fetch(`${HTTP_PROTOCOL}//${BACKEND_HOST}/refresh-token`, {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ username: currentUsername }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Token refresh failed");
+        sessionToken = data.token;
+    } catch (err) {
+        console.error("[joinRoom] Token refresh failed:", err);
+        if (lobbyError) lobbyError.textContent = "! SESSION ERROR — PLEASE LOG IN AGAIN";
+        return;
+    }
+    isIntentionalClose = false;
+    isJoined = false;
+    connect();
+}
+
+
+// ── Lobby Event Listeners ─────────────────────────────────────────────────────
+
+if (createRoomBtn) createRoomBtn.addEventListener("click", createRoomAction);
+if (joinCodeBtn)   joinCodeBtn.addEventListener("click", joinRoomByCode);
+
+if (roomNameInput) {
+    roomNameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") createRoomAction(); });
+}
+if (roomCodeInput) {
+    roomCodeInput.addEventListener("input", () => {
+        roomCodeInput.value = roomCodeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    });
+    roomCodeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") joinRoomByCode(); });
+}
+
+if (roomListScroll) {
+    roomListScroll.addEventListener("click", (e) => {
+        const btn = e.target.closest(".room-card-join-btn");
+        if (!btn) return;
+        const roomId   = btn.dataset.roomId;
+        const roomName = btn.dataset.roomName;
+        if (roomId && roomName) joinRoom(roomId, roomName);
+    });
+}
+
+if (roomSearchInput) {
+    roomSearchInput.addEventListener("input", () => {
+        renderRoomList(roomSearchInput.value.trim());
+    });
+}
+
+if (refreshRoomsBtn) {
+    refreshRoomsBtn.addEventListener("click", () => {
+        refreshRoomsBtn.classList.add("spinning");
+        loadRooms().then(() => setTimeout(() => refreshRoomsBtn.classList.remove("spinning"), 400));
+    });
+}
+
+if (lobbyLogoutBtn) {
+    lobbyLogoutBtn.addEventListener("click", () => {
+        if (roomPollTimer) { clearInterval(roomPollTimer); roomPollTimer = null; }
+        currentUsername = ""; sessionToken = null;
+        aesKey = null; ecdsaKeyPair = null; myPublicKeyJwk = null; cryptoReady = false;
+        setCryptoStatusUI(false);
+        lobbyScreen.classList.add("hidden");
+        loginScreen.classList.remove("hidden");
+        registerBtn.disabled = false; registerBtnText.textContent = "► SIGN UP";
+        loginBtn.disabled = false; loginBtnText.textContent = "► LOGIN";
+        loginError.textContent = "";
+        regPassword.value = ""; loginPassword.value = "";
+        switchTab("register");
+    });
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener("load", () => {
     regUsername.focus();
     renderAvatarPicker();
+    renderRoomAvatarPicker();
     updateXPBar();
-    setCryptoStatusUI(false); // shown as inactive until join
+    setCryptoStatusUI(false);
 });

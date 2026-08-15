@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="PixelChat — 8-bit secure real-time group chat with AES-GCM encryption and ECDSA signatures">
+    <meta name="description" content="PixelChat — 8-bit secure real-time group chat with AES-GCM encryption, ECDSA signatures, and multi-room support">
     <title>PixelChat — Secure Real-Time Chat</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=9">
+    <link rel="stylesheet" href="/static/style.css?v=10">
 </head>
 <body>
 
@@ -27,7 +27,7 @@
             <div class="pixel-title-block">
                 <div class="blink-cursor">▶</div>
                 <h1 class="pixel-title">PIXEL<br>CHAT</h1>
-                <div class="title-sub">[ GROUP QUEST v1.0 ]</div>
+                <div class="title-sub">[ GROUP QUEST v2.0 ]</div>
             </div>
 
             <!-- Login card -->
@@ -103,6 +103,121 @@
         </div>
     </div>
 
+    <!-- ═══════════════════ LOBBY SCREEN ═══════════════════ -->
+    <div id="lobby-screen" class="screen hidden">
+
+        <div class="pixel-bg"></div>
+
+        <div class="lobby-wrap">
+
+            <!-- Lobby Header -->
+            <div class="lobby-header">
+                <div class="lobby-logo">
+                    <span class="logo-sprite">▣</span>
+                    <div>
+                        <div class="lobby-title">PIXEL<span class="crimson">CHAT</span></div>
+                        <div class="lobby-subtitle">SELECT YOUR QUEST</div>
+                    </div>
+                </div>
+                <div class="lobby-user-info">
+                    <span class="lobby-username-label" id="lobby-username-display"></span>
+                    <button class="lobby-logout-btn" id="lobby-logout-btn" title="Back to login">✕ LOGOUT</button>
+                </div>
+            </div>
+
+            <!-- Lobby Content -->
+            <div class="lobby-content">
+
+                <!-- LEFT: Create / Join panel -->
+                <div class="lobby-left-panel">
+
+                    <!-- Lobby Tab switcher -->
+                    <div class="lobby-tabs">
+                        <button class="lobby-tab active" id="ltab-create" onclick="switchLobbyTab('create')">✦ CREATE</button>
+                        <button class="lobby-tab" id="ltab-join" onclick="switchLobbyTab('join')">⌖ JOIN CODE</button>
+                    </div>
+
+                    <!-- CREATE ROOM panel -->
+                    <div id="lpanel-create" class="lobby-panel">
+                        <div class="pixel-card-title" style="margin-top:12px;">▸ ROOM AVATAR</div>
+                        <div class="avatar-picker-grid" id="room-avatar-picker-grid">
+                            <!-- Dynamically rendered by app.js -->
+                        </div>
+
+                        <div class="pixel-card-title" style="margin-top:14px;">▸ ROOM NAME</div>
+                        <div class="pixel-input-wrap">
+                            <span class="input-prompt">_</span>
+                            <input type="text" id="room-name-input" class="pixel-input"
+                                placeholder="THE GREAT HALL" maxlength="40"
+                                autocomplete="off" spellcheck="false">
+                        </div>
+
+                        <div class="pixel-card-title" style="margin-top:12px;">▸ VISIBILITY</div>
+                        <div class="room-visibility-toggle">
+                            <button class="visibility-btn active" id="vis-public" onclick="setVisibility(true)">
+                                🌐 PUBLIC
+                            </button>
+                            <button class="visibility-btn" id="vis-private" onclick="setVisibility(false)">
+                                🔒 PRIVATE
+                            </button>
+                        </div>
+                        <p class="visibility-hint" id="visibility-hint">Appears in the browse list</p>
+
+                        <button id="create-room-btn" class="pixel-btn pixel-btn--primary" style="margin-top:16px;">
+                            <span id="create-room-btn-text">✦ CREATE ROOM</span>
+                        </button>
+
+                        <p id="lobby-error" class="pixel-error"></p>
+                    </div>
+
+                    <!-- JOIN BY CODE panel -->
+                    <div id="lpanel-join" class="lobby-panel hidden">
+                        <div class="pixel-card-title" style="margin-top:14px;">▸ ENTER ROOM CODE</div>
+                        <div class="pixel-input-wrap room-code-wrap">
+                            <span class="input-prompt">⌖</span>
+                            <input type="text" id="room-code-input" class="pixel-input room-code-input"
+                                placeholder="ABC123" maxlength="6"
+                                autocomplete="off" spellcheck="false">
+                        </div>
+                        <p class="room-code-hint">6-character code, e.g. XKJ3P9</p>
+
+                        <button id="join-code-btn" class="pixel-btn pixel-btn--primary" style="margin-top:16px;">
+                            <span id="join-code-btn-text">⌖ JOIN ROOM</span>
+                        </button>
+
+                        <p id="join-code-error" class="pixel-error"></p>
+                    </div>
+
+                </div>
+
+                <!-- RIGHT: Browse panel -->
+                <div class="lobby-right-panel">
+                    <div class="browse-header">
+                        <span class="browse-title">▸ PUBLIC ROOMS</span>
+                        <button class="refresh-btn" id="refresh-rooms-btn" title="Refresh room list">↺</button>
+                    </div>
+
+                    <div class="room-search-wrap">
+                        <span class="input-prompt">🔍</span>
+                        <input type="text" id="room-search-input" class="pixel-input room-search-input"
+                            placeholder="SEARCH ROOMS..." autocomplete="off">
+                    </div>
+
+                    <div class="room-list-scroll" id="room-list-scroll">
+                        <!-- Room cards rendered by JS -->
+                        <div class="room-list-empty" id="room-list-empty">
+                            <div class="empty-icon">🏰</div>
+                            <div class="empty-text">NO PUBLIC ROOMS YET</div>
+                            <div class="empty-sub">CREATE ONE TO GET STARTED!</div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+    </div>
+
     <!-- ═══════════════════ CHAT SCREEN ═══════════════════ -->
     <div id="chat-screen" class="screen hidden">
         <div class="chat-layout">
@@ -117,6 +232,12 @@
                         <div class="logo-title">PIXEL</div>
                         <div class="logo-title crimson">CHAT</div>
                     </div>
+                </div>
+
+                <!-- Room info badge -->
+                <div class="room-info-badge" id="room-info-badge">
+                    <div class="room-badge-code" id="room-badge-code">------</div>
+                    <div class="room-badge-name" id="room-badge-name">ROOM</div>
                 </div>
 
                 <div class="panel-divider"></div>
@@ -175,18 +296,19 @@
                     <div class="hdr-left">
                         <span class="hdr-sprite">▣</span>
                         <div class="hdr-info">
-                            <div class="hdr-room"># GREAT HALL</div>
+                            <div class="hdr-room" id="hdr-room-name"># GREAT HALL</div>
                             <div class="hdr-sub" id="header-subtitle">0 PLAYERS</div>
                         </div>
                     </div>
                     <div class="hdr-right">
+                        <span class="hdr-room-code-badge" id="hdr-room-code" title="Room code — share this to invite others"></span>
                         <span class="crypto-status" id="crypto-status" title="Crypto not initialised">⚠ NO CRYPTO</span>
-                        <button class="hdr-icon-btn" id="info-btn" title="Security & receipt guide">ⓘ</button>
+                        <button class="hdr-icon-btn" id="info-btn" title="Security &amp; receipt guide">ⓘ</button>
                         <div class="connection-status" id="connection-status">
                             <span class="status-dot connected" id="status-dot"></span>
                             <span class="status-text" id="status-text">ONLINE</span>
                         </div>
-                        <button class="hdr-leave-btn" id="leave-btn" title="Leave the chat">✕ LEAVE</button>
+                        <button class="hdr-leave-btn" id="leave-btn" title="Leave room and return to lobby">⬅ LOBBY</button>
                     </div>
                 </header>
 
@@ -272,7 +394,7 @@
     <!-- Security & Receipt info modal -->
     <div class="info-modal-overlay hidden" id="info-modal-overlay">
         <div class="info-modal">
-            <div class="info-modal-title">▸ SECURITY & RECEIPTS</div>
+            <div class="info-modal-title">▸ SECURITY &amp; RECEIPTS</div>
             <div class="info-modal-divider"></div>
 
             <div class="info-modal-section-title">🔐 SECURITY BADGES</div>
@@ -329,6 +451,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=3"></script>
+    <script src="/static/app.js?v=4"></script>
 </body>
 </html>

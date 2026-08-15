@@ -5,6 +5,7 @@ Uses Python's built-in sqlite3 module.
 Handles:
   - Message persistence (encrypted, with HMAC for tamper detection)
   - User public key registry (for ECDSA signature verification)
+  - Chat room management (rooms identified by unique 6-char codes)
 """
 
 import sqlite3
@@ -34,6 +35,7 @@ def _get_hmac_secret() -> bytes:
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id     TEXT    NOT NULL DEFAULT 'default',
     username    TEXT    NOT NULL,
     avatar      TEXT    NOT NULL DEFAULT 'wizard',
     ciphertext  TEXT    NOT NULL,   -- base64 AES-GCM ciphertext
@@ -57,7 +59,33 @@ CREATE TABLE IF NOT EXISTS users (
     avatar        TEXT    NOT NULL DEFAULT 'wizard',
     created_at    TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS rooms (
+    id          TEXT    PRIMARY KEY,              -- 6-char alphanumeric code e.g. "XKJ3P9"
+    name        TEXT    NOT NULL,
+    created_by  TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL,
+    is_public   INTEGER NOT NULL DEFAULT 1,       -- 1=public (browsable), 0=private (code-only)
+    avatar      TEXT    NOT NULL DEFAULT '🏰'
+);
 """
+
+# ── Migration helpers ─────────────────────────────────────────────────────────
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """Add columns that may not exist in older DB versions."""
+    cursor = conn.execute("PRAGMA table_info(messages)")
+    columns = {row[1] for row in cursor.fetchall()}
+    if "room_id" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN room_id TEXT NOT NULL DEFAULT 'default'")
+        print("[DB] Migration: added room_id column to messages")
+
+    cursor = conn.execute("PRAGMA table_info(rooms)")
+    columns = {row[1] for row in cursor.fetchall()}
+    if "avatar" not in columns:
+        conn.execute("ALTER TABLE rooms ADD COLUMN avatar TEXT NOT NULL DEFAULT '🏰'")
+        print("[DB] Migration: added avatar column to rooms")
+
 
 # ── Initialisation ────────────────────────────────────────────────────────────
 
@@ -65,6 +93,7 @@ def init_db() -> None:
     """Create tables if they don't exist. Call once at server startup."""
     with _connect() as conn:
         conn.executescript(_SCHEMA)
+        _apply_migrations(conn)
     print(f"[DB] Initialised — {DB_PATH}")
 
 
@@ -92,9 +121,70 @@ def _verify_hmac(ciphertext: str, iv: str, stored_digest: str) -> bool:
     return hmac.compare_digest(expected, stored_digest)
 
 
+# ── Room CRUD ─────────────────────────────────────────────────────────────────
+
+def create_room(room_id: str, name: str, created_by: str, is_public: bool = True, avatar: str = "🏰") -> None:
+    """
+    Insert a new room into the rooms table.
+    Raises sqlite3.IntegrityError if the room_id already exists.
+    """
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO rooms (id, name, created_by, created_at, is_public, avatar)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (room_id, name, created_by, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 1 if is_public else 0, avatar),
+        )
+
+
+def get_room(room_id: str) -> dict | None:
+    """Retrieve a room by its code. Returns dict or None."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, name, created_by, created_at, is_public, avatar FROM rooms WHERE id = ?",
+            (room_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id":         row["id"],
+        "name":       row["name"],
+        "created_by": row["created_by"],
+        "created_at": row["created_at"],
+        "is_public":  bool(row["is_public"]),
+        "avatar":     row["avatar"],
+    }
+
+
+def list_rooms() -> list[dict]:
+    """Return all public rooms (ordered newest first)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, name, created_by, created_at, is_public, avatar
+            FROM rooms
+            WHERE is_public = 1
+            ORDER BY created_at DESC
+            """,
+        ).fetchall()
+    return [
+        {
+            "id":         row["id"],
+            "name":       row["name"],
+            "created_by": row["created_by"],
+            "created_at": row["created_at"],
+            "is_public":  bool(row["is_public"]),
+            "avatar":     row["avatar"],
+        }
+        for row in rows
+    ]
+
+
 # ── Message CRUD ──────────────────────────────────────────────────────────────
 
 def save_message(
+    room_id: str,
     username: str,
     avatar: str,
     ciphertext: str,
@@ -116,10 +206,11 @@ def save_message(
         cur = conn.execute(
             """
             INSERT INTO messages
-                (username, avatar, ciphertext, iv, signature, public_key, timestamp, hmac_digest, sig_valid)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (room_id, username, avatar, ciphertext, iv, signature, public_key, timestamp, hmac_digest, sig_valid)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                room_id,
                 username,
                 avatar,
                 ciphertext,
@@ -134,9 +225,9 @@ def save_message(
         return cur.lastrowid
 
 
-def get_history(limit: int = 50) -> list[dict]:
+def get_history(room_id: str, limit: int = 50) -> list[dict]:
     """
-    Return the last `limit` messages from the DB.
+    Return the last `limit` messages for a given room.
     Each row is enriched with a `tampered` flag (True if HMAC mismatch).
     """
     with _connect() as conn:
@@ -145,10 +236,11 @@ def get_history(limit: int = 50) -> list[dict]:
             SELECT username, avatar, ciphertext, iv, signature, public_key,
                    timestamp, hmac_digest, sig_valid
             FROM messages
+            WHERE room_id = ?
             ORDER BY id DESC
             LIMIT ?
             """,
-            (limit,),
+            (room_id, limit),
         ).fetchall()
 
     messages = []
@@ -232,13 +324,16 @@ def get_user(username: str) -> dict | None:
     }
 
 
+def clear_room_history(room_id: str) -> None:
+    """Delete all messages for a specific room. Called when the room has been empty for a while."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM messages WHERE room_id = ?", (room_id,))
+    print(f"[DB] Room '{room_id}' message history cleared.")
+
+
 def clear_history() -> None:
-    """Delete all messages and user keys. Called when the room has been empty for a while."""
+    """Delete ALL messages and user keys. Legacy fallback."""
     with _connect() as conn:
         conn.execute("DELETE FROM messages")
         conn.execute("DELETE FROM user_keys")
-    print("[DB] Message history and user keys cleared.")
-
-
-
-
+    print("[DB] All message history and user keys cleared.")

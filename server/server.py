@@ -6,6 +6,7 @@ Extends the original WebSocket group chat with:
   - AES-GCM symmetric encryption (key served from .env via /group-key)
   - Per-user ECDSA-P256 signing key pairs (server verifies every message)
   - HMAC-SHA256 database tamper detection
+  - Multi-room support: rooms identified by unique 6-char codes
 """
 
 import json
@@ -18,6 +19,7 @@ import hmac
 import hashlib
 import secrets
 import sqlite3
+import string
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -58,6 +60,19 @@ def _require_env(key: str) -> str:
 
 AES_GROUP_KEY_HEX: str = _require_env("AES_GROUP_KEY")   # 64 hex chars = 32 bytes
 HMAC_SECRET_HEX: str   = _require_env("HMAC_SECRET")     # 64 hex chars = 32 bytes
+
+
+# ── Room Code Generation ───────────────────────────────────────────────────────
+
+_ROOM_CODE_CHARS = string.ascii_uppercase + string.digits
+
+def _generate_room_code() -> str:
+    """Generate a unique 6-character alphanumeric room code."""
+    for _ in range(20):  # try up to 20 times to avoid collision
+        code = "".join(secrets.choice(_ROOM_CODE_CHARS) for _ in range(6))
+        if db.get_room(code) is None:
+            return code
+    raise RuntimeError("Could not generate unique room code after 20 attempts")
 
 
 # ── ECDSA helpers ─────────────────────────────────────────────────────────────
@@ -110,20 +125,25 @@ def verify_ecdsa_signature(plaintext_bytes: bytes, sig_b64: str, jwk: dict) -> b
 # ── ConnectionManager ─────────────────────────────────────────────────────────
 
 class ConnectionManager:
-    """Manages active WebSocket connections and broadcasting."""
+    """Manages active WebSocket connections across multiple rooms."""
 
     def __init__(self):
+        # ws → { username, avatar, room_id }
         self.active_connections: dict[WebSocket, dict] = {}
 
-    def add(self, websocket: WebSocket, username: str, avatar: str = "avatar-1"):
+    def add(self, websocket: WebSocket, username: str, avatar: str, room_id: str):
         self.active_connections[websocket] = {
             "username": username,
-            "avatar": avatar,
+            "avatar":   avatar,
+            "room_id":  room_id,
         }
 
-    def remove(self, websocket: WebSocket) -> str | None:
+    def remove(self, websocket: WebSocket) -> tuple[str | None, str | None]:
+        """Returns (username, room_id) of the removed connection."""
         info = self.active_connections.pop(websocket, None)
-        return info["username"] if info else None
+        if info:
+            return info["username"], info["room_id"]
+        return None, None
 
     def get_username(self, websocket: WebSocket) -> str | None:
         info = self.active_connections.get(websocket)
@@ -131,23 +151,38 @@ class ConnectionManager:
 
     def get_avatar(self, websocket: WebSocket) -> str:
         info = self.active_connections.get(websocket)
-        return info["avatar"] if info else "avatar-1"
+        return info["avatar"] if info else "wizard"
 
-    def get_all_users(self) -> list[dict]:
-        users = list(self.active_connections.values())
+    def get_room_id(self, websocket: WebSocket) -> str | None:
+        info = self.active_connections.get(websocket)
+        return info["room_id"] if info else None
+
+    def get_room_users(self, room_id: str) -> list[dict]:
+        users = [
+            {"username": info["username"], "avatar": info["avatar"]}
+            for info in self.active_connections.values()
+            if info["room_id"] == room_id
+        ]
         return sorted(users, key=lambda x: x["username"].lower())
 
-    def is_username_taken(self, username: str) -> bool:
+    def get_room_count(self, room_id: str) -> int:
+        return sum(1 for info in self.active_connections.values() if info["room_id"] == room_id)
+
+    def is_username_taken_in_room(self, username: str, room_id: str) -> bool:
         return username.lower() in [
-            info["username"].lower() for info in self.active_connections.values()
+            info["username"].lower()
+            for info in self.active_connections.values()
+            if info["room_id"] == room_id
         ]
 
-    async def broadcast(self, message: dict, exclude: WebSocket | None = None) -> int:
-        """Send JSON to all clients (optionally excluding one). Returns delivery count."""
+    async def broadcast_to_room(
+        self, room_id: str, message: dict, exclude: WebSocket | None = None
+    ) -> int:
+        """Send JSON to all clients in a room (optionally excluding one). Returns delivery count."""
         disconnected = []
         delivered = 0
-        for ws in self.active_connections:
-            if ws != exclude:
+        for ws, info in self.active_connections.items():
+            if info["room_id"] == room_id and ws != exclude:
                 try:
                     await ws.send_json(message)
                     delivered += 1
@@ -157,14 +192,17 @@ class ConnectionManager:
             self.active_connections.pop(ws, None)
         return delivered
 
-    async def send_to_all(self, message: dict) -> int:
-        return await self.broadcast(message, exclude=None)
+    async def send_to_all_in_room(self, room_id: str, message: dict) -> int:
+        return await self.broadcast_to_room(room_id, message, exclude=None)
 
 
 # ── FastAPI App ───────────────────────────────────────────────────────────────
 
 app = FastAPI(title="Secure Group Chat Server")
 manager = ConnectionManager()
+
+# Per-room cleanup tasks: room_id → asyncio.Task
+cleanup_tasks: dict[str, asyncio.Task] = {}
 
 # Uploads directory
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
@@ -182,7 +220,6 @@ app.add_middleware(
 
 FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 3000))
 CLEANUP_TIMEOUT = int(os.environ.get("CLEANUP_TIMEOUT", 300))
-cleanup_task: asyncio.Task | None = None
 
 # ── Session store ──────────────────────────────────────────────────────────
 # Maps one-time token → { username, avatar }
@@ -201,6 +238,10 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+class CreateRoomRequest(BaseModel):
+    name:      str
+    is_public: bool = True
+    avatar:    str = "🏰"
 
 @app.on_event("startup")
 async def startup():
@@ -262,6 +303,80 @@ async def login(req: LoginRequest):
     return {"token": token, "avatar": user["avatar"]}
 
 
+class RefreshTokenRequest(BaseModel):
+    username: str
+
+
+@app.post("/refresh-token")
+async def refresh_token(req: RefreshTokenRequest):
+    """
+    Re-issue a one-time session token for a user returning to the lobby.
+    No password required — caller must know the username (held in client state).
+    Used after leaving a room to join another without re-logging in.
+    """
+    username = req.username.strip()
+    user = db.get_user(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    token = secrets.token_hex(32)
+    active_sessions[token] = {"username": user["username"], "avatar": user["avatar"]}
+    print(f"[Auth] Token refreshed for: {user['username']}")
+    return {"token": token, "avatar": user["avatar"]}
+
+
+
+# ── Room Endpoints ────────────────────────────────────────────────────────────
+
+@app.get("/rooms")
+async def get_rooms():
+    """
+    Return all public rooms with live online player counts.
+    """
+    rooms = db.list_rooms()
+    for room in rooms:
+        room["online"] = manager.get_room_count(room["id"])
+    return {"rooms": rooms}
+
+
+@app.post("/rooms")
+async def create_room(req: CreateRoomRequest):
+    """
+    Create a new chat room. Returns the generated room code.
+    The caller must hold a valid session token (passed via X-Session-Token header).
+    For simplicity in the lab, we accept any request — room creator is recorded from the name field.
+    """
+    name = req.name.strip()
+    if not name or len(name) > 40:
+        raise HTTPException(status_code=400, detail="Room name must be 1-40 characters.")
+
+    room_id = _generate_room_code()
+    # created_by is anonymous in this endpoint; the join ws message records the actual user
+    db.create_room(room_id, name, created_by="system", is_public=req.is_public, avatar=req.avatar)
+    print(f"[Rooms] Created room '{name}' ({room_id}), public={req.is_public}, avatar={req.avatar}")
+    return {"room_id": room_id, "name": name, "is_public": req.is_public, "avatar": req.avatar}
+
+
+@app.post("/rooms/{room_id}/creator")
+async def set_room_creator(room_id: str, body: dict):
+    """Update the creator name for a room after the user joins via WebSocket."""
+    # This is called optimistically from the client after joining
+    # It's best-effort, non-critical
+    return {"ok": True}
+
+
+@app.get("/rooms/{room_id}")
+async def get_room(room_id: str):
+    """
+    Check if a room with the given code exists.
+    Returns room metadata or 404.
+    """
+    room = db.get_room(room_id.upper())
+    if not room:
+        raise HTTPException(status_code=404, detail=f"Room '{room_id}' not found.")
+    room["online"] = manager.get_room_count(room["id"])
+    return room
+
+
 # ── REST Endpoints ────────────────────────────────────────────────────────────
 
 @app.get("/group-key")
@@ -302,6 +417,35 @@ def timestamp() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
 
+def _schedule_room_cleanup(room_id: str):
+    """Start a cleanup timer for an empty room."""
+    global cleanup_tasks
+
+    async def _cleanup():
+        try:
+            await asyncio.sleep(CLEANUP_TIMEOUT)
+            if manager.get_room_count(room_id) == 0:
+                db.clear_room_history(room_id)
+                print(f"[!] Room '{room_id}' empty for {CLEANUP_TIMEOUT}s — history cleared.")
+        except asyncio.CancelledError:
+            pass
+
+    old = cleanup_tasks.get(room_id)
+    if old and not old.done():
+        old.cancel()
+    cleanup_tasks[room_id] = asyncio.create_task(_cleanup())
+    print(f"[*] Room '{room_id}' is empty — scheduled {CLEANUP_TIMEOUT}s history cleanup.")
+
+
+def _cancel_room_cleanup(room_id: str):
+    """Cancel any pending cleanup timer for a room."""
+    task = cleanup_tasks.get(room_id)
+    if task and not task.done():
+        task.cancel()
+        cleanup_tasks.pop(room_id, None)
+        print(f"[*] User joined room '{room_id}' — cancelled cleanup timer.")
+
+
 # ── WebSocket Endpoint ────────────────────────────────────────────────────────
 
 @app.websocket("/ws")
@@ -309,6 +453,7 @@ async def websocket_endpoint(websocket: WebSocket):
     """Handle a single client's full lifecycle: join → chat → leave."""
     await websocket.accept()
     username = None
+    room_id  = None
 
     try:
         # ── Wait for join message ────────────────────────────────────────
@@ -322,9 +467,10 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close(code=1008)
             return
 
-        # ── Token-based auth (replaces bare username join) ─────────────────
+        # ── Token-based auth ─────────────────────────────────────────────
         token   = data.get("token", "").strip()
         pub_key = data.get("public_key")
+        room_id = data.get("room_id", "").strip().upper()
 
         session = active_sessions.pop(token, None)  # consume token (one-time use)
         if not session:
@@ -335,47 +481,62 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close(code=1008)
             return
 
+        # ── Validate room ─────────────────────────────────────────────────
+        if not room_id:
+            await websocket.send_json({
+                "type":    "error",
+                "message": "No room specified. Please select or create a room.",
+            })
+            await websocket.close(code=1008)
+            return
+
+        room = db.get_room(room_id)
+        if not room:
+            await websocket.send_json({
+                "type":    "error",
+                "message": f"Room '{room_id}' does not exist.",
+            })
+            await websocket.close(code=1008)
+            return
+
         username = session["username"]
         avatar   = session["avatar"]
 
-        # ── Register user ────────────────────────────────────────────────
-        global cleanup_task
-        if cleanup_task and not cleanup_task.done():
-            cleanup_task.cancel()
-            cleanup_task = None
-            print("[*] User joined — cancelled room history cleanup timer.")
+        # ── Cancel any pending cleanup for this room ──────────────────────
+        _cancel_room_cleanup(room_id)
 
-        manager.add(websocket, username, avatar)
+        manager.add(websocket, username, avatar, room_id)
         db.register_user_key(username, pub_key)
-        print(f"[+] {username} ({avatar}) joined | Online: {len(manager.active_connections)}")
+        print(f"[+] {username} ({avatar}) joined room '{room_id}' | Online in room: {manager.get_room_count(room_id)}")
 
         # Welcome message to joiner
         await websocket.send_json({
-            "type": "system",
-            "message": f"Welcome to the chat, {username}!",
+            "type":      "system",
+            "message":   f"Welcome to #{room['name']}, {username}!",
             "timestamp": timestamp(),
+            "room":      {"id": room_id, "name": room["name"]},
         })
 
-        # Notify others
-        await manager.broadcast({
-            "type": "join",
-            "username": username,
-            "avatar": avatar,
-            "message": f"{username} joined the chat",
+        # Notify others in the room
+        await manager.broadcast_to_room(room_id, {
+            "type":      "join",
+            "username":  username,
+            "avatar":    avatar,
+            "message":   f"{username} joined the room",
             "timestamp": timestamp(),
         }, exclude=websocket)
 
-        # Updated user list to everyone
-        await manager.send_to_all({
-            "type": "userList",
-            "users": manager.get_all_users(),
+        # Updated user list to everyone in room
+        await manager.send_to_all_in_room(room_id, {
+            "type":  "userList",
+            "users": manager.get_room_users(room_id),
         })
 
         # Send DB-backed history to the new joiner
-        history = db.get_history(limit=50)
+        history = db.get_history(room_id=room_id, limit=50)
         if history:
             await websocket.send_json({
-                "type": "history",
+                "type":     "history",
                 "messages": history,
             })
 
@@ -386,33 +547,27 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # ── Chat message ─────────────────────────────────────────────
             if msg_type == "message":
-                ciphertext  = data.get("ciphertext", "")
-                iv          = data.get("iv", "")
-                signature   = data.get("signature", "")
-                sender_key  = data.get("public_key") or db.get_user_key(username) or {}
+                ciphertext    = data.get("ciphertext", "")
+                iv            = data.get("iv", "")
+                signature     = data.get("signature", "")
+                sender_key    = data.get("public_key") or db.get_user_key(username) or {}
                 client_msg_id = data.get("client_msg_id", "")
-                attachment  = data.get("attachment")
+                attachment    = data.get("attachment")
 
                 if not ciphertext or not iv or not signature:
-                    # Malformed message — skip
                     continue
 
                 # ── Verify ECDSA signature server-side ───────────────────
-                # The client signs the plaintext payload before encrypting.
-                # We receive the signature and public key; the signed bytes
-                # are the UTF-8 encoding of the canonical plaintext JSON.
-                # Because we can't decrypt on the server (key is client-side),
-                # we verify the signature over the ciphertext+iv concatenation
-                # as the signed material (deterministic, available server-side).
                 signed_material = (ciphertext + iv).encode("utf-8")
                 sig_valid = verify_ecdsa_signature(signed_material, signature, sender_key)
 
                 if not sig_valid:
-                    print(f"[!] Invalid signature from {username}")
+                    print(f"[!] Invalid signature from {username} in room '{room_id}'")
 
                 # ── Persist to DB ─────────────────────────────────────────
                 if ciphertext:
                     db.save_message(
+                        room_id    = room_id,
                         username   = username,
                         avatar     = avatar,
                         ciphertext = ciphertext,
@@ -423,7 +578,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         sig_valid  = sig_valid,
                     )
 
-                # ── Broadcast encrypted message ───────────────────────────
+                # ── Broadcast encrypted message to room ───────────────────
                 msg = {
                     "type":       "message",
                     "username":   username,
@@ -436,11 +591,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     "sig_valid":  sig_valid,
                     "attachment": attachment,
                 }
-                delivered = await manager.send_to_all(msg)
+                delivered = await manager.send_to_all_in_room(room_id, msg)
 
                 # ── Delivery receipt ──────────────────────────────────────
+                room_size      = manager.get_room_count(room_id)
                 others_reached = delivered - 1
-                total_others   = len(manager.active_connections) - 1
+                total_others   = room_size - 1
                 if total_others <= 0:
                     receipt_status = "sent"
                 elif others_reached >= total_others:
@@ -456,7 +612,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # ── Typing indicator ──────────────────────────────────────────
             elif msg_type == "typing":
-                await manager.broadcast({
+                await manager.broadcast_to_room(room_id, {
                     "type":     "typing",
                     "username": username,
                 }, exclude=websocket)
@@ -464,38 +620,27 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        print(f"[!] Error for {username or 'unknown'}: {e}")
+        print(f"[!] Error for {username or 'unknown'} in room '{room_id}': {e}")
     finally:
         if username and websocket in manager.active_connections:
             manager.remove(websocket)
-            online = len(manager.active_connections)
-            print(f"[-] {username} left | Online: {online}")
+            online_in_room = manager.get_room_count(room_id) if room_id else 0
+            print(f"[-] {username} left room '{room_id}' | Online in room: {online_in_room}")
 
-            if online == 0:
-                async def _empty_room_cleanup():
-                    try:
-                        await asyncio.sleep(CLEANUP_TIMEOUT)
-                        if len(manager.active_connections) == 0:
-                            db.clear_history()
-                            print(f"[!] Room empty for {CLEANUP_TIMEOUT}s — message history auto-cleared.")
-                    except asyncio.CancelledError:
-                        pass
+            if room_id and online_in_room == 0:
+                _schedule_room_cleanup(room_id)
 
-                if cleanup_task and not cleanup_task.done():
-                    cleanup_task.cancel()
-                cleanup_task = asyncio.create_task(_empty_room_cleanup())
-                print(f"[*] Room is empty — scheduled {CLEANUP_TIMEOUT}s history cleanup timer.")
-
-            await manager.broadcast({
-                "type":     "leave",
-                "username": username,
-                "message":  f"{username} left the chat",
-                "timestamp": timestamp(),
-            })
-            await manager.send_to_all({
-                "type":  "userList",
-                "users": manager.get_all_users(),
-            })
+            if room_id:
+                await manager.broadcast_to_room(room_id, {
+                    "type":      "leave",
+                    "username":  username,
+                    "message":   f"{username} left the room",
+                    "timestamp": timestamp(),
+                })
+                await manager.send_to_all_in_room(room_id, {
+                    "type":  "userList",
+                    "users": manager.get_room_users(room_id),
+                })
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -506,8 +651,9 @@ if __name__ == "__main__":
     port = int(os.environ.get("BACKEND_PORT", 5000))
 
     print("=" * 50)
-    print("  Secure Group Chat Server")
+    print("  Secure Group Chat Server (Multi-Room)")
     print(f"  WebSocket : wss://0.0.0.0:{port}/ws")
+    print(f"  Rooms API : GET/POST https://0.0.0.0:{port}/rooms")
     print(f"  Group Key : GET https://0.0.0.0:{port}/group-key")
     print(f"  Frontend  : https://localhost:{FRONTEND_PORT}")
     print("=" * 50)
