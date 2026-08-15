@@ -127,7 +127,7 @@ The frontend is served at `http://0.0.0.0:3000`.
 http://localhost:3000
 ```
 
-The client automatically connects to `ws://localhost:8000/ws` using `window.location.hostname`.
+The client automatically connects to `ws://localhost:5000/ws` using `window.location.hostname`.
 
 ---
 
