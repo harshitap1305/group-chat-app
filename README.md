@@ -72,10 +72,10 @@ The default `.env.example`:
 
 ```env
 # Backend (FastAPI WebSocket + upload server)
-BACKEND_PORT=8000
+BACKEND_PORT=5000
 
 # Frontend (static file server)
-FRONTEND_PORT=5000
+FRONTEND_PORT=3000
 ```
 
 > **Note:** Never commit your `.env` file — it is already in `.gitignore`.
@@ -108,9 +108,9 @@ python3 server.py
 ```
 
 The server starts on:
-- **WebSocket**: `ws://0.0.0.0:8000/ws`
-- **File upload**: `POST http://0.0.0.0:8000/upload`
-- **Uploaded files**: `http://0.0.0.0:8000/uploads/<filename>`
+- **WebSocket**: `ws://0.0.0.0:5000/ws`
+- **File upload**: `POST http://0.0.0.0:5000/upload`
+- **Uploaded files**: `http://0.0.0.0:5000/uploads/<filename>`
 
 ### 4. Start the Frontend (Terminal 2)
 
@@ -119,12 +119,12 @@ cd client
 python3 serve.py
 ```
 
-The frontend is served at `http://0.0.0.0:5000`.
+The frontend is served at `http://0.0.0.0:3000`.
 
 ### 5. Open in Browser
 
 ```
-http://localhost:5000
+http://localhost:3000
 ```
 
 The client automatically connects to `ws://localhost:8000/ws` using `window.location.hostname`.
@@ -133,8 +133,8 @@ The client automatically connects to `ws://localhost:8000/ws` using `window.loca
 
 ## Lab / Multi-Machine Deployment
 
-1. **Machine 1** (Server): Run both `server.py` and `serve.py` — note its IP (`ip addr` on Linux).
-2. **Machines 1–4** (Clients): Open `http://<machine-1-ip>:5000` in any browser.
+1. **Machine 1** (Server): Run both `server.py` and `serve.py` — note its IP (`ip addr` on Linux) (`10.1.75.51` in our case).
+2. **Machines 1–4** (Clients): Open `http://10.1.75.51:3269/` in any browser.
 3. Each player picks an avatar, enters a unique name, and joins the quest.
 
 > The WebSocket URL is derived from `window.location.hostname` + `BACKEND_PORT`, so clients automatically connect to the correct host with zero configuration.
@@ -150,7 +150,7 @@ The client automatically connects to `ws://localhost:8000/ws` using `window.loca
 │  ┌─────────────────────┐   ┌──────────────────────────────┐  │
 │  │  Frontend Server    │   │  Backend Server (FastAPI)    │  │
 │  │  client/serve.py    │   │  server/server.py            │  │
-│  │  http://0.0.0.0:5000│   │  ws://0.0.0.0:8000/ws        │  │
+│  │  http://0.0.0.0:3000│   │  ws://0.0.0.0:5000/ws        │  │
 │  │                     │   │  POST /upload                │  │
 │  │  Serves:            │   │  GET  /uploads/<file>        │  │
 │  │  index.html         │   │                              │  │
@@ -162,7 +162,7 @@ The client automatically connects to `ws://localhost:8000/ws` using `window.loca
 │                            └──────────────────────────────┘  │
 └────────────────┬───────────────────────┬─────────────────────┘
                  │                       │
-          HTTP :5000              WS :8000/ws
+          HTTP :5269              WS :5269/ws
           (static files)         (chat + uploads)
                  │                       │
         ┌────────┴────────┐     ┌────────┴────────┐
