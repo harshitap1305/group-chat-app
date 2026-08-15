@@ -49,6 +49,14 @@ CREATE TABLE IF NOT EXISTS user_keys (
     username    TEXT PRIMARY KEY,
     public_key  TEXT NOT NULL        -- JSON JWK
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT    NOT NULL,   -- bcrypt hash
+    avatar        TEXT    NOT NULL DEFAULT 'wizard',
+    created_at    TEXT    NOT NULL
+);
 """
 
 # ── Initialisation ────────────────────────────────────────────────────────────
@@ -185,6 +193,43 @@ def get_user_key(username: str) -> dict | None:
             "SELECT public_key FROM user_keys WHERE username = ?", (username,)
         ).fetchone()
     return json.loads(row["public_key"]) if row else None
+
+
+# ── Persistent user accounts ───────────────────────────────────────────────────
+
+def create_user(username: str, password_hash: str, avatar: str) -> None:
+    """
+    Insert a new user into the users table.
+    Raises sqlite3.IntegrityError if the username is already taken (UNIQUE constraint).
+    """
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO users (username, password_hash, avatar, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (username, password_hash, avatar, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+
+
+def get_user(username: str) -> dict | None:
+    """
+    Retrieve a user row by username (case-insensitive).
+    Returns { id, username, password_hash, avatar } or None if not found.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, username, password_hash, avatar FROM users WHERE username = ? COLLATE NOCASE",
+            (username,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id":            row["id"],
+        "username":      row["username"],
+        "password_hash": row["password_hash"],
+        "avatar":        row["avatar"],
+    }
 
 
 def clear_history() -> None:
