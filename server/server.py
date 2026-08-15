@@ -16,15 +16,19 @@ import shutil
 import base64
 import hmac
 import hashlib
+import secrets
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+import bcrypt
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 # cryptography library — ECDSA verification
 from cryptography.hazmat.primitives.asymmetric.ec import (
@@ -177,8 +181,25 @@ app.add_middleware(
 )
 
 FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 3000))
-CLEANUP_TIMEOUT = int(os.environ.get("CLEANUP_TIMEOUT", 300))  # 300s (5 minutes) timeout for clearing message history after room empties
+CLEANUP_TIMEOUT = int(os.environ.get("CLEANUP_TIMEOUT", 300))
 cleanup_task: asyncio.Task | None = None
+
+# ── Session store ──────────────────────────────────────────────────────────
+# Maps one-time token → { username, avatar }
+# Tokens are issued by /register and /login, consumed once by the WebSocket join.
+active_sessions: dict[str, dict] = {}
+
+
+# ── Request models ──────────────────────────────────────────────────────────
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    avatar:   str = "wizard"
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 @app.on_event("startup")
@@ -186,6 +207,59 @@ async def startup():
     """Initialise the SQLite database on server start."""
     db.init_db()
 
+
+# ── Auth Endpoints ────────────────────────────────────────────────────────────
+
+@app.post("/register")
+async def register(req: RegisterRequest):
+    """
+    Create a new user account.
+    Hashes the password with bcrypt, saves to DB, returns a one-time session token.
+    """
+    username = req.username.strip()
+    password = req.password
+    avatar   = req.avatar
+
+    if not username or len(username) > 20:
+        raise HTTPException(status_code=400, detail="Username must be 1-20 characters.")
+    if not username.replace("_", "").isalnum():
+        raise HTTPException(status_code=400, detail="Username may only contain letters, numbers, and underscores.")
+    if not password or len(password) < 4:
+        raise HTTPException(status_code=400, detail="Password must be at least 4 characters.")
+
+    pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+    try:
+        db.create_user(username, pw_hash, avatar)
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=409, detail=f"Username '{username}' is already taken.")
+
+    token = secrets.token_hex(32)
+    active_sessions[token] = {"username": username, "avatar": avatar}
+    print(f"[Auth] Registered: {username} ({avatar})")
+    return {"token": token, "avatar": avatar}
+
+
+@app.post("/login")
+async def login(req: LoginRequest):
+    """
+    Authenticate an existing user.
+    Verifies bcrypt hash, returns a one-time session token.
+    """
+    username = req.username.strip()
+    password = req.password
+
+    user = db.get_user(username)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    if not bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    token = secrets.token_hex(32)
+    active_sessions[token] = {"username": user["username"], "avatar": user["avatar"]}
+    print(f"[Auth] Login: {user['username']} ({user['avatar']})")
+    return {"token": token, "avatar": user["avatar"]}
 
 
 # ── REST Endpoints ────────────────────────────────────────────────────────────
@@ -248,32 +322,21 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close(code=1008)
             return
 
-        username = data.get("username", "").strip()
-        avatar   = data.get("avatar", "avatar-1")
-        pub_key  = data.get("public_key")  # JWK dict from SubtleCrypto
+        # ── Token-based auth (replaces bare username join) ─────────────────
+        token   = data.get("token", "").strip()
+        pub_key = data.get("public_key")
 
-        # Validate username
-        if not username:
-            await websocket.send_json({"type": "error", "message": "Username cannot be empty."})
-            await websocket.close(code=1008)
-            return
-
-        if manager.is_username_taken(username):
+        session = active_sessions.pop(token, None)  # consume token (one-time use)
+        if not session:
             await websocket.send_json({
-                "type": "error",
-                "message": f"Username '{username}' is already taken. Please choose another.",
+                "type":    "error",
+                "message": "Invalid or expired session token. Please log in again.",
             })
             await websocket.close(code=1008)
             return
 
-        # Validate public key
-        if not pub_key or not isinstance(pub_key, dict):
-            await websocket.send_json({
-                "type": "error",
-                "message": "A valid ECDSA public key (JWK) is required to join.",
-            })
-            await websocket.close(code=1008)
-            return
+        username = session["username"]
+        avatar   = session["avatar"]
 
         # ── Register user ────────────────────────────────────────────────
         global cleanup_task
