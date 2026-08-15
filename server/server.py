@@ -224,8 +224,8 @@ async def register(req: RegisterRequest):
         raise HTTPException(status_code=400, detail="Username must be 1-20 characters.")
     if not username.replace("_", "").isalnum():
         raise HTTPException(status_code=400, detail="Username may only contain letters, numbers, and underscores.")
-    if not password or len(password) < 4:
-        raise HTTPException(status_code=400, detail="Password must be at least 4 characters.")
+    if not password or len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
 
     pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 

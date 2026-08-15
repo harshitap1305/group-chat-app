@@ -889,7 +889,7 @@ async function authenticate(mode) {
         endpoint = "/register";
         payload = { username, password, avatar: selectedAvatar };
         if (!username) { showLoginError("ENTER A NAME!"); return; }
-        if (password.length < 4) { showLoginError("PASSWORD TOO SHORT!"); return; }
+        if (password.length < 6) { showLoginError("PASSWORD TOO SHORT!"); return; }
     } else {
         username = loginUsername.value.trim();
         password = loginPassword.value;
