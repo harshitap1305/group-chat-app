@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="PixelChat — 8-bit real-time group chat">
-    <title>PixelChat — Real-Time Chat</title>
+    <meta name="description" content="PixelChat — 8-bit secure real-time group chat with AES-GCM encryption and ECDSA signatures">
+    <title>PixelChat — Secure Real-Time Chat</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
@@ -163,7 +163,8 @@
                         </div>
                     </div>
                     <div class="hdr-right">
-                        <button class="hdr-icon-btn" id="info-btn" title="Receipt emoji guide">ⓘ</button>
+                        <span class="crypto-status" id="crypto-status" title="Crypto not initialised">⚠ NO CRYPTO</span>
+                        <button class="hdr-icon-btn" id="info-btn" title="Security & receipt guide">ⓘ</button>
                         <div class="connection-status" id="connection-status">
                             <span class="status-dot connected" id="status-dot"></span>
                             <span class="status-text" id="status-text">ONLINE</span>
@@ -251,11 +252,39 @@
         </div>
     </div>
 
-    <!-- Receipt emoji info modal -->
+    <!-- Security & Receipt info modal -->
     <div class="info-modal-overlay hidden" id="info-modal-overlay">
         <div class="info-modal">
-            <div class="info-modal-title">▸ MESSAGE RECEIPTS</div>
+            <div class="info-modal-title">▸ SECURITY & RECEIPTS</div>
             <div class="info-modal-divider"></div>
+
+            <div class="info-modal-section-title">🔐 SECURITY BADGES</div>
+            <ul class="info-modal-list">
+                <li>
+                    <span class="info-emoji">🔒 ✓</span>
+                    <div class="info-desc">
+                        <span class="info-label">VERIFIED</span>
+                        <span class="info-sub">Message was decrypted (AES-GCM) and the sender's ECDSA-P256 signature is valid.</span>
+                    </div>
+                </li>
+                <li>
+                    <span class="info-emoji">⚠</span>
+                    <div class="info-desc">
+                        <span class="info-label">SIG INVALID</span>
+                        <span class="info-sub">Signature could not be verified. The message may have been altered in transit.</span>
+                    </div>
+                </li>
+                <li>
+                    <span class="info-emoji">🚨</span>
+                    <div class="info-desc">
+                        <span class="info-label">TAMPERED</span>
+                        <span class="info-sub">Server HMAC check failed — this stored message was modified in the database!</span>
+                    </div>
+                </li>
+            </ul>
+
+            <div class="info-modal-divider"></div>
+            <div class="info-modal-section-title">📬 DELIVERY RECEIPTS</div>
             <ul class="info-modal-list">
                 <li>
                     <span class="info-emoji">😴</span>

@@ -1,54 +1,55 @@
 /**
- * PixelChat — WebSocket Client
+ * PixelChat — Secure WebSocket Client
+ * Adds AES-GCM encryption (key from server /group-key endpoint)
+ * and ECDSA-P256 per-user signing via the browser's SubtleCrypto API.
  */
 
-// ── Config ───────────────────────────────────────────────────────
-const WS_PROTOCOL = window.location.protocol === "https:" ? "wss:" : "ws:";
+// ── Config ────────────────────────────────────────────────────────────────────
+const WS_PROTOCOL   = window.location.protocol === "https:" ? "wss:" : "ws:";
 const HTTP_PROTOCOL = window.location.protocol === "https:" ? "https:" : "http:";
-const BACKEND_PORT = 8000;  // Defined in root .env (BACKEND_PORT)
-const BACKEND_HOST = `${window.location.hostname}:${BACKEND_PORT}`;
-const SERVER_URL = `${WS_PROTOCOL}//${BACKEND_HOST}/ws`;
-const UPLOAD_URL = `${HTTP_PROTOCOL}//${BACKEND_HOST}/upload`;
-// ── Sounds ───────────────────────────────────────────────────────
-const SOUNDS = {
-    join: new Audio("/static/sounds/mushroom.mp3"),   // someone joins
-    message: new Audio("/static/sounds/coin.mp3"),    // new message
-    leave: new Audio("/static/sounds/pipe.mp3"),      // someone leaves
-};
+const BACKEND_PORT  = 5000;  // Mirrors .env BACKEND_PORT
+const BACKEND_HOST  = `${window.location.hostname}:${BACKEND_PORT}`;
+const SERVER_URL    = `${WS_PROTOCOL}//${BACKEND_HOST}/ws`;
+const UPLOAD_URL    = `${HTTP_PROTOCOL}//${BACKEND_HOST}/upload`;
+const GROUP_KEY_URL = `${HTTP_PROTOCOL}//${BACKEND_HOST}/group-key`;
 
+// ── Sounds ────────────────────────────────────────────────────────────────────
+const SOUNDS = {
+    join:    new Audio("/static/sounds/mushroom.mp3"),
+    message: new Audio("/static/sounds/coin.mp3"),
+    leave:   new Audio("/static/sounds/pipe.mp3"),
+};
 Object.values(SOUNDS).forEach(a => { a.preload = "auto"; a.volume = 0.5; });
 
 function playSound(name) {
     const clip = SOUNDS[name];
     if (!clip) return;
     clip.currentTime = 0;
-    clip.play().catch(() => { });
+    clip.play().catch(() => {});
 }
 
 const RECONNECT_BASE_DELAY = 1000;
-const RECONNECT_MAX_DELAY = 10000;
+const RECONNECT_MAX_DELAY  = 10000;
 
-// Avatar bg colors
+// ── Avatars ───────────────────────────────────────────────────────────────────
 const AVATAR_COLORS = [
-    "#778873", "#A1BC98", "#546058", "#8aab88",
-    "#6a8068", "#c8dcc5", "#4a6050", "#9abca0",
-    "#667860", "#b0ccb0", "#506858", "#7a9878",
+    "#778873","#A1BC98","#546058","#8aab88",
+    "#6a8068","#c8dcc5","#4a6050","#9abca0",
+    "#667860","#b0ccb0","#506858","#7a9878",
 ];
-
-// Predefined Avatars
 const AVATARS = [
-    { id: "wizard", name: "WIZARD", icon: "🧙‍♂️", bg: "#4a6050", border: "#A1BC98" },
-    { id: "robot", name: "ROBOT", icon: "🤖", bg: "#384d54", border: "#729fa8" },
-    { id: "ninja", name: "NINJA", icon: "🥷", bg: "#2d3330", border: "#586660" },
-    { id: "astronaut", name: "ASTRO", icon: "👨‍🚀", bg: "#423854", border: "#8f75b8" },
-    { id: "dragon", name: "DRAGON", icon: "🐉", bg: "#5c2a2a", border: "#b85c5c" },
-    { id: "hero", name: "HERO", icon: "🦸", bg: "#2a425c", border: "#5c8eb8" },
-    { id: "alien", name: "ALIEN", icon: "👽", bg: "#2a5c3b", border: "#5cb87d" },
-    { id: "cyber", name: "CYBER", icon: "👾", bg: "#542a5c", border: "#b85cb0" },
-    { id: "fox", name: "FOX", icon: "🦊", bg: "#5c3d2a", border: "#b87c5c" },
-    { id: "owl", name: "OWL", icon: "🦉", bg: "#473f32", border: "#8a7d67" },
-    { id: "bear", name: "BEAR", icon: "🐻", bg: "#3b2f28", border: "#786154" },
-    { id: "lion", name: "LION", icon: "🦁", bg: "#594924", border: "#ad914e" },
+    { id:"wizard",    name:"WIZARD",   icon:"🧙‍♂️", bg:"#4a6050", border:"#A1BC98" },
+    { id:"robot",     name:"ROBOT",    icon:"🤖",   bg:"#384d54", border:"#729fa8" },
+    { id:"ninja",     name:"NINJA",    icon:"🥷",   bg:"#2d3330", border:"#586660" },
+    { id:"astronaut", name:"ASTRO",    icon:"👨‍🚀", bg:"#423854", border:"#8f75b8" },
+    { id:"dragon",    name:"DRAGON",   icon:"🐉",   bg:"#5c2a2a", border:"#b85c5c" },
+    { id:"hero",      name:"HERO",     icon:"🦸",   bg:"#2a425c", border:"#5c8eb8" },
+    { id:"alien",     name:"ALIEN",    icon:"👽",   bg:"#2a5c3b", border:"#5cb87d" },
+    { id:"cyber",     name:"CYBER",    icon:"👾",   bg:"#542a5c", border:"#b85cb0" },
+    { id:"fox",       name:"FOX",      icon:"🦊",   bg:"#5c3d2a", border:"#b87c5c" },
+    { id:"owl",       name:"OWL",      icon:"🦉",   bg:"#473f32", border:"#8a7d67" },
+    { id:"bear",      name:"BEAR",     icon:"🐻",   bg:"#3b2f28", border:"#786154" },
+    { id:"lion",      name:"LION",     icon:"🦁",   bg:"#594924", border:"#ad914e" },
 ];
 
 let selectedAvatar = "wizard";
@@ -57,149 +58,289 @@ function getAvatarData(avatarId, username = "") {
     const found = AVATARS.find(a => a.id === avatarId);
     if (found) return found;
     return {
-        id: avatarId || "default",
-        name: username || "HERO",
-        icon: (username || "?").charAt(0).toUpperCase(),
-        bg: getAvatarColor(username || avatarId || "user"),
-        border: "#A1BC98"
+        id:     avatarId || "default",
+        name:   username || "HERO",
+        icon:   (username || "?").charAt(0).toUpperCase(),
+        bg:     getAvatarColor(username || avatarId || "user"),
+        border: "#A1BC98",
     };
 }
 
 function renderAvatarPicker() {
-    const pickerGrid = document.getElementById("avatar-picker-grid");
-    if (!pickerGrid) return;
-    pickerGrid.innerHTML = "";
-
-    AVATARS.forEach((av) => {
+    const grid = document.getElementById("avatar-picker-grid");
+    if (!grid) return;
+    grid.innerHTML = "";
+    AVATARS.forEach(av => {
         const item = document.createElement("div");
         item.className = `avatar-option ${av.id === selectedAvatar ? "selected" : ""}`;
         item.dataset.id = av.id;
         item.style.backgroundColor = av.bg;
         item.style.borderColor = av.border;
         item.title = av.name;
-
         item.innerHTML = `
             <span class="avatar-option-icon">${av.icon}</span>
             <span class="avatar-option-name">${av.name}</span>
         `;
-
         item.addEventListener("click", () => {
             selectedAvatar = av.id;
             document.querySelectorAll(".avatar-option").forEach(el => el.classList.remove("selected"));
             item.classList.add("selected");
         });
-
-        pickerGrid.appendChild(item);
+        grid.appendChild(item);
     });
 }
 
-// Ranks
+// ── Ranks ─────────────────────────────────────────────────────────────────────
 const RANKS = [
-    { level: 1, xp: 0, name: "NEWBIE", next: 50 },
-    { level: 2, xp: 50, name: "SQUIRE", next: 150 },
-    { level: 3, xp: 150, name: "KNIGHT", next: 320 },
-    { level: 4, xp: 320, name: "CHAMPION", next: 600 },
-    { level: 5, xp: 600, name: "WARLORD", next: 1000 },
-    { level: 6, xp: 1000, name: "LEGEND", next: 1000 },
+    { level:1, xp:0,    name:"NEWBIE",   next:50   },
+    { level:2, xp:50,   name:"SQUIRE",   next:150  },
+    { level:3, xp:150,  name:"KNIGHT",   next:320  },
+    { level:4, xp:320,  name:"CHAMPION", next:600  },
+    { level:5, xp:600,  name:"WARLORD",  next:1000 },
+    { level:6, xp:1000, name:"LEGEND",   next:1000 },
 ];
 
-// ── State ─────────────────────────────────────────────────────────
-let ws = null;
-let currentUsername = "";
+// ── State ─────────────────────────────────────────────────────────────────────
+let ws                = null;
+let currentUsername   = "";
 let reconnectAttempts = 0;
-let reconnectTimer = null;
+let reconnectTimer    = null;
 let isIntentionalClose = false;
-let isJoined = false;
-let typingTimeout = null;
-let lastTypingSent = 0;
-let isTabFocused = true;
+let isJoined          = false;
+let typingTimeout     = null;
+let lastTypingSent    = 0;
+let isTabFocused      = true;
 
 // Gamification
-let totalXP = 0;
-let streakCount = 0;
+let totalXP      = 0;
+let streakCount  = 0;
 let messagesSent = 0;
 let sessionStart = null;
 let sessionTimer = null;
 let currentLevel = 1;
 
-// Receipt tracking: maps client_msg_id -> receipt <span> DOM element
+// Receipt tracking
 const pendingReceipts = new Map();
 
 // Attachment state
 let attachmentData = null;
-let pendingFile = null;
+let pendingFile    = null;
 
 function clearPendingAttachment() {
     attachmentData = null;
-    pendingFile = null;
+    pendingFile    = null;
     if (attachmentPreviewBar) attachmentPreviewBar.classList.add("hidden");
-    if (attachmentFilename) attachmentFilename.textContent = "";
-    if (attachmentFilesize) attachmentFilesize.textContent = "";
-    if (fileInput) fileInput.value = "";
+    if (attachmentFilename)  attachmentFilename.textContent  = "";
+    if (attachmentFilesize)  attachmentFilesize.textContent  = "";
+    if (fileInput)           fileInput.value = "";
 }
 
-function formatBytes(bytes) {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+// ── Crypto State ──────────────────────────────────────────────────────────────
+let aesKey         = null;   // CryptoKey (AES-GCM 256-bit, imported from /group-key)
+let ecdsaKeyPair   = null;   // { privateKey, publicKey } CryptoKey
+let myPublicKeyJwk = null;   // JWK of my ECDSA public key (sent in join + every message)
+let cryptoReady    = false;
+
+// ── Crypto Helpers ────────────────────────────────────────────────────────────
+
+/** Hex string → Uint8Array */
+function hexToBytes(hex) {
+    const arr = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < arr.length; i++) {
+        arr[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    }
+    return arr;
 }
 
-function getFileIcon(fileType, fileName) {
-    if (fileType.includes("pdf")) return "📄";
-    if (fileType.includes("word") || fileName.endsWith(".docx") || fileName.endsWith(".doc")) return "📝";
-    if (fileType.includes("zip") || fileType.includes("rar") || fileType.includes("7z")) return "🗜️";
-    if (fileType.includes("text") || fileName.endsWith(".txt")) return "🗒️";
-    if (fileType.includes("spreadsheet") || fileName.endsWith(".xlsx") || fileName.endsWith(".csv")) return "📊";
-    return "📁";
+/** ArrayBuffer → base64url string */
+function bufToB64(buf) {
+    return btoa(String.fromCharCode(...new Uint8Array(buf)))
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
-// ── DOM ───────────────────────────────────────────────────────────
-const loginScreen = document.getElementById("login-screen");
-const chatScreen = document.getElementById("chat-screen");
-const usernameInput = document.getElementById("username-input");
-const joinBtn = document.getElementById("join-btn");
-const joinBtnText = document.getElementById("join-btn-text");
-const loginError = document.getElementById("login-error");
-const messagesScroll = document.getElementById("messages-scroll");
-const messageInput = document.getElementById("message-input");
-const sendBtn = document.getElementById("send-btn");
-const userList = document.getElementById("user-list");
-const headerSubtitle = document.getElementById("header-subtitle");
-const typingIndicator = document.getElementById("typing-indicator");
-const typingTextEl = document.getElementById("typing-text");
-const emojiPicker = document.getElementById("emoji-picker");
-const emojiToggleBtn = document.getElementById("emoji-toggle-btn");
-const fileInput = document.getElementById("file-input");
-const attachmentToggleBtn = document.getElementById("attachment-toggle-btn");
+/** base64url string → Uint8Array */
+function b64ToBuf(b64) {
+    const padded = b64.replace(/-/g, "+").replace(/_/g, "/");
+    const bin = atob(padded);
+    return Uint8Array.from(bin, c => c.charCodeAt(0));
+}
+
+/**
+ * Initialise crypto:
+ *  1. Fetch AES group key from server /group-key (hex in .env)
+ *  2. Import it as AES-GCM 256-bit CryptoKey
+ *  3. Generate per-user ECDSA-P256 signing key pair
+ */
+async function initCrypto() {
+    try {
+        // 1. Fetch key from server
+        const resp = await fetch(GROUP_KEY_URL);
+        if (!resp.ok) throw new Error(`/group-key returned ${resp.status}`);
+        const { key: keyHex } = await resp.json();
+        if (!keyHex || keyHex.length !== 64) throw new Error("Invalid AES key length from server");
+
+        // 2. Import AES-GCM key
+        aesKey = await crypto.subtle.importKey(
+            "raw",
+            hexToBytes(keyHex),
+            { name: "AES-GCM" },
+            false,           // not extractable
+            ["encrypt", "decrypt"]
+        );
+
+        // 3. Generate ECDSA P-256 key pair for this session
+        ecdsaKeyPair = await crypto.subtle.generateKey(
+            { name: "ECDSA", namedCurve: "P-256" },
+            true,
+            ["sign", "verify"]
+        );
+        myPublicKeyJwk = await crypto.subtle.exportKey("jwk", ecdsaKeyPair.publicKey);
+
+        cryptoReady = true;
+        setCryptoStatusUI(true);
+        console.log("[Crypto] Initialised — AES-GCM + ECDSA-P256 ready");
+    } catch (err) {
+        cryptoReady = false;
+        setCryptoStatusUI(false);
+        console.error("[Crypto] Init failed:", err);
+        throw err;
+    }
+}
+
+/**
+ * Encrypt a plaintext string with AES-GCM.
+ * Returns { ciphertext: base64url, iv: base64url }
+ */
+async function encryptMessage(plaintext) {
+    const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV
+    const encodedText = new TextEncoder().encode(plaintext);
+    const cipherBuf = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        aesKey,
+        encodedText
+    );
+    return {
+        ciphertext: bufToB64(cipherBuf),
+        iv:         bufToB64(iv),
+    };
+}
+
+/**
+ * Decrypt a base64url-encoded AES-GCM ciphertext.
+ * Returns the plaintext string, or null on failure (tampered/wrong key).
+ */
+async function decryptMessage(ciphertextB64, ivB64) {
+    try {
+        const cipherBuf = b64ToBuf(ciphertextB64);
+        const iv        = b64ToBuf(ivB64);
+        const plainBuf  = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv },
+            aesKey,
+            cipherBuf
+        );
+        return new TextDecoder().decode(plainBuf);
+    } catch {
+        return null; // decryption failure = ciphertext modified or wrong key
+    }
+}
+
+/**
+ * Sign material (ciphertext + iv concatenated as UTF-8) with ECDSA-P256/SHA-256.
+ * Returns base64url-encoded IEEE P1363 signature (r||s, 64 bytes).
+ */
+async function signMaterial(material) {
+    const encoded = new TextEncoder().encode(material);
+    const sigBuf  = await crypto.subtle.sign(
+        { name: "ECDSA", hash: "SHA-256" },
+        ecdsaKeyPair.privateKey,
+        encoded
+    );
+    return bufToB64(sigBuf);
+}
+
+/**
+ * Verify a base64url ECDSA-P256/SHA-256 signature.
+ * `senderJwk` — the JWK public key dict of the sender.
+ * Returns true if valid.
+ */
+async function verifySignature(material, sigB64, senderJwk) {
+    try {
+        const pubKey = await crypto.subtle.importKey(
+            "jwk",
+            senderJwk,
+            { name: "ECDSA", namedCurve: "P-256" },
+            false,
+            ["verify"]
+        );
+        const encoded = new TextEncoder().encode(material);
+        const sigBuf  = b64ToBuf(sigB64);
+        return await crypto.subtle.verify(
+            { name: "ECDSA", hash: "SHA-256" },
+            pubKey,
+            sigBuf,
+            encoded
+        );
+    } catch {
+        return false;
+    }
+}
+
+function setCryptoStatusUI(ready) {
+    const el = document.getElementById("crypto-status");
+    if (!el) return;
+    if (ready) {
+        el.textContent  = "🔒 SECURE";
+        el.className    = "crypto-status secure";
+        el.title        = "AES-GCM encrypted · ECDSA signed";
+    } else {
+        el.textContent  = "⚠ NO CRYPTO";
+        el.className    = "crypto-status insecure";
+        el.title        = "Crypto failed to initialise";
+    }
+}
+
+// ── DOM ───────────────────────────────────────────────────────────────────────
+const loginScreen       = document.getElementById("login-screen");
+const chatScreen        = document.getElementById("chat-screen");
+const usernameInput     = document.getElementById("username-input");
+const joinBtn           = document.getElementById("join-btn");
+const joinBtnText       = document.getElementById("join-btn-text");
+const loginError        = document.getElementById("login-error");
+const messagesScroll    = document.getElementById("messages-scroll");
+const messageInput      = document.getElementById("message-input");
+const sendBtn           = document.getElementById("send-btn");
+const userList          = document.getElementById("user-list");
+const headerSubtitle    = document.getElementById("header-subtitle");
+const typingIndicator   = document.getElementById("typing-indicator");
+const typingTextEl      = document.getElementById("typing-text");
+const emojiPicker       = document.getElementById("emoji-picker");
+const emojiToggleBtn    = document.getElementById("emoji-toggle-btn");
+const fileInput         = document.getElementById("file-input");
+const attachmentToggleBtn  = document.getElementById("attachment-toggle-btn");
 const attachmentPreviewBar = document.getElementById("attachment-preview-bar");
-const attachmentFilename = document.getElementById("attachment-filename");
-const attachmentFilesize = document.getElementById("attachment-filesize");
-const attachmentRemoveBtn = document.getElementById("attachment-remove-btn");
-const statusDot = document.getElementById("status-dot");
-const statusText = document.getElementById("status-text");
+const attachmentFilename   = document.getElementById("attachment-filename");
+const attachmentFilesize   = document.getElementById("attachment-filesize");
+const attachmentRemoveBtn  = document.getElementById("attachment-remove-btn");
+const statusDot         = document.getElementById("status-dot");
+const statusText        = document.getElementById("status-text");
 
 // Gamification DOM
-const xpBarFill = document.getElementById("xp-bar-fill");
-const xpValue = document.getElementById("xp-value");
-const rankNameEl = document.getElementById("rank-name");
+const xpBarFill   = document.getElementById("xp-bar-fill");
+const xpValue     = document.getElementById("xp-value");
+const rankNameEl  = document.getElementById("rank-name");
 const onlineBadge = document.getElementById("online-count-badge");
-const msgCountEl = document.getElementById("msg-count-stat");
-const streakEl = document.getElementById("streak-count");
-const sessionTimeEl = document.getElementById("session-time-stat");
-const levelupToast = document.getElementById("levelup-toast");
-const levelupSub = document.getElementById("levelup-sub");
+const msgCountEl  = document.getElementById("msg-count-stat");
+const streakEl    = document.getElementById("streak-count");
+const sessionTimeEl  = document.getElementById("session-time-stat");
+const levelupToast   = document.getElementById("levelup-toast");
+const levelupSub     = document.getElementById("levelup-sub");
 
-// Info modal + leave button
-const infoBtn = document.getElementById("info-btn");
-const leaveBtn = document.getElementById("leave-btn");
+const infoBtn          = document.getElementById("info-btn");
+const leaveBtn         = document.getElementById("leave-btn");
 const infoModalOverlay = document.getElementById("info-modal-overlay");
-const infoModalClose = document.getElementById("info-modal-close");
+const infoModalClose   = document.getElementById("info-modal-close");
 
-// ══════════════════════════════════════════════════════════════════
-//  WEBSOCKET
-// ══════════════════════════════════════════════════════════════════
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 
 function connect() {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
@@ -208,7 +349,13 @@ function connect() {
     ws.onopen = () => {
         reconnectAttempts = 0;
         updateConnectionStatus("connected");
-        ws.send(JSON.stringify({ type: "join", username: currentUsername, avatar: selectedAvatar }));
+        // Send join with ECDSA public key
+        ws.send(JSON.stringify({
+            type:       "join",
+            username:   currentUsername,
+            avatar:     selectedAvatar,
+            public_key: myPublicKeyJwk,
+        }));
     };
 
     ws.onmessage = (event) => {
@@ -240,9 +387,7 @@ function disconnect() {
     pendingReceipts.clear();
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  MESSAGE HANDLER
-// ══════════════════════════════════════════════════════════════════
+// ── Message Handler ───────────────────────────────────────────────────────────
 
 function handleMessage(data) {
     switch (data.type) {
@@ -268,7 +413,7 @@ function handleMessage(data) {
 
         case "message":
             if (data.username === currentUsername) break;
-            addChatMessage(data.username, data.text, data.timestamp, data.avatar, data.attachment);
+            handleIncomingEncryptedMessage(data);
             hideTypingIndicator(data.username);
             playSound("message");
             if (!isTabFocused) playNotificationSound();
@@ -304,9 +449,28 @@ function handleMessage(data) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  RENDER
-// ══════════════════════════════════════════════════════════════════
+/**
+ * Decrypt and verify an incoming encrypted message, then render it.
+ */
+async function handleIncomingEncryptedMessage(data) {
+    const { username, avatar, ciphertext, iv, signature, public_key, timestamp, sig_valid: serverSigValid, tampered, attachment } = data;
+
+    // Decrypt
+    const plaintext = await decryptMessage(ciphertext, iv);
+    if (plaintext === null) {
+        // AES-GCM auth tag failed — message is corrupted/tampered
+        addChatMessage(username, "[⚠ DECRYPTION FAILED — MESSAGE TAMPERED]", timestamp, avatar, null, false, true);
+        return;
+    }
+
+    // Client-side ECDSA verification (independent check)
+    const material  = ciphertext + iv;
+    const sigValid  = public_key ? await verifySignature(material, signature, public_key) : false;
+
+    addChatMessage(username, plaintext, timestamp, avatar, attachment, sigValid, tampered === true);
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
 
 function addSystemMessage(text, time, subtype = "") {
     const el = document.createElement("div");
@@ -320,63 +484,41 @@ function addSystemMessage(text, time, subtype = "") {
     scrollToBottom();
 }
 
-function addChatMessage(username, text, time, avatarId = "wizard", attachment = null) {
-    const isOwn = username === currentUsername;
+/**
+ * Render a chat message bubble.
+ * sigValid   — true = ECDSA verified, false = invalid/unknown
+ * tampered   — true = server flagged HMAC mismatch (DB was modified)
+ */
+function addChatMessage(username, text, time, avatarId = "wizard", attachment = null, sigValid = true, tampered = false) {
+    const isOwn      = username === currentUsername;
     const avatarData = getAvatarData(avatarId, username);
-    const el = document.createElement("div");
-    el.className = `message ${isOwn ? "own" : "other"}`;
+    const el         = document.createElement("div");
+    el.className     = `message ${isOwn ? "own" : "other"}`;
 
     const avatarHtml = `
         <div class="chat-msg-avatar" style="background:${avatarData.bg}; border-color:${avatarData.border}" title="${escapeHtml(avatarData.name)}">
             <span>${avatarData.icon}</span>
         </div>`;
 
-    let attachmentHtml = "";
-    if (attachment && attachment.url) {
-        const fileUrl = escapeHtml(attachment.url);
-        const fileName = escapeHtml(attachment.fileName || "attachment");
-        const fileType = (attachment.fileType || "").toLowerCase();
-        const fileSize = formatBytes(attachment.fileSize || 0);
-
-        if (fileType.startsWith("image/")) {
-            attachmentHtml = `
-                <div class="chat-attachment chat-attachment-image">
-                    <a href="${fileUrl}" target="_blank" title="View Full Image">
-                        <img src="${fileUrl}" alt="${fileName}">
-                    </a>
-                </div>`;
-        } else if (fileType.startsWith("video/")) {
-            attachmentHtml = `
-                <div class="chat-attachment chat-attachment-video">
-                    <video controls src="${fileUrl}"></video>
-                </div>`;
-        } else if (fileType.startsWith("audio/")) {
-            attachmentHtml = `
-                <div class="chat-attachment chat-attachment-audio">
-                    <audio controls src="${fileUrl}"></audio>
-                </div>`;
-        } else {
-            const icon = getFileIcon(fileType, fileName);
-            attachmentHtml = `
-                <div class="chat-attachment">
-                    <a href="${fileUrl}" download="${fileName}" class="chat-attachment-file" target="_blank" title="Download File">
-                        <span class="file-card-icon">${icon}</span>
-                        <div class="file-card-details">
-                            <span class="file-card-name">${fileName}</span>
-                            <span class="file-card-size">${fileSize}</span>
-                        </div>
-                        <span class="file-card-dl-btn">💾 DOWNLOAD</span>
-                    </a>
-                </div>`;
-        }
+    // Security badges
+    let securityBadge = "";
+    if (tampered) {
+        securityBadge = `<span class="sec-badge tampered" title="Database tamper detected!">🚨 TAMPERED</span>`;
+    } else if (sigValid) {
+        securityBadge = `<span class="sec-badge verified" title="ECDSA signature verified">🔒 ✓</span>`;
+    } else {
+        securityBadge = `<span class="sec-badge invalid" title="Signature invalid or missing">⚠ SIG?</span>`;
     }
+
+    let attachmentHtml = buildAttachmentHtml(attachment);
 
     el.innerHTML = `
         ${!isOwn ? avatarHtml : ""}
-        <div class="message-bubble">
+        <div class="message-bubble ${tampered ? "tampered-bubble" : ""}">
             <div class="message-meta">
                 <span class="message-username">${escapeHtml(username)}</span>
                 ${time ? `<span class="message-time">${escapeHtml(time)}</span>` : ""}
+                ${securityBadge}
             </div>
             ${text ? `<p class="message-text">${escapeHtml(text)}</p>` : ""}
             ${attachmentHtml}
@@ -397,34 +539,16 @@ function addOwnMessageOptimistic(text, msgId, attachment = null) {
             <span>${avatarData.icon}</span>
         </div>`;
 
-    // Build attachment HTML
-    let attachmentHtml = "";
-    if (attachment && attachment.url) {
-        const fileUrl = escapeHtml(attachment.url);
-        const fileName = escapeHtml(attachment.fileName || "attachment");
-        const fileType = (attachment.fileType || "").toLowerCase();
-        const fileSize = formatBytes(attachment.fileSize || 0);
-        if (fileType.startsWith("image/")) {
-            attachmentHtml = `<div class="chat-attachment chat-attachment-image"><a href="${fileUrl}" target="_blank"><img src="${fileUrl}" alt="${fileName}"></a></div>`;
-        } else if (fileType.startsWith("video/")) {
-            attachmentHtml = `<div class="chat-attachment chat-attachment-video"><video controls src="${fileUrl}"></video></div>`;
-        } else if (fileType.startsWith("audio/")) {
-            attachmentHtml = `<div class="chat-attachment chat-attachment-audio"><audio controls src="${fileUrl}"></audio></div>`;
-        } else {
-            const icon = getFileIcon(fileType, fileName);
-            attachmentHtml = `<div class="chat-attachment"><a href="${fileUrl}" download="${fileName}" class="chat-attachment-file" target="_blank"><span class="file-card-icon">${icon}</span><div class="file-card-details"><span class="file-card-name">${fileName}</span><span class="file-card-size">${fileSize}</span></div><span class="file-card-dl-btn">💾 DOWNLOAD</span></a></div>`;
-        }
-    }
-
     const receiptId = `receipt-${msgId}`;
     el.innerHTML = `
         <div class="message-bubble">
             <div class="message-meta">
                 <span class="message-username">${escapeHtml(currentUsername)}</span>
                 <span class="message-time">${currentTime()}</span>
+                <span class="sec-badge verified" title="Sent encrypted & signed">🔒 ✓</span>
             </div>
             ${text ? `<p class="message-text">${escapeHtml(text)}</p>` : ""}
-            ${attachmentHtml}
+            ${buildAttachmentHtml(attachment)}
             <span class="receipt-icon" id="${receiptId}" title="Sent">😴</span>
         </div>
         ${avatarHtml}
@@ -434,20 +558,35 @@ function addOwnMessageOptimistic(text, msgId, attachment = null) {
     pendingReceipts.set(msgId, document.getElementById(receiptId));
 }
 
-/**
- * Upgrade the receipt emoji on a sent bubble based on server confirmation
- */
+function buildAttachmentHtml(attachment) {
+    if (!attachment || !attachment.url) return "";
+    const fileUrl  = escapeHtml(attachment.url);
+    const fileName = escapeHtml(attachment.fileName || "attachment");
+    const fileType = (attachment.fileType || "").toLowerCase();
+    const fileSize = formatBytes(attachment.fileSize || 0);
+
+    if (fileType.startsWith("image/")) {
+        return `<div class="chat-attachment chat-attachment-image"><a href="${fileUrl}" target="_blank"><img src="${fileUrl}" alt="${fileName}"></a></div>`;
+    } else if (fileType.startsWith("video/")) {
+        return `<div class="chat-attachment chat-attachment-video"><video controls src="${fileUrl}"></video></div>`;
+    } else if (fileType.startsWith("audio/")) {
+        return `<div class="chat-attachment chat-attachment-audio"><audio controls src="${fileUrl}"></audio></div>`;
+    } else {
+        const icon = getFileIcon(fileType, fileName);
+        return `<div class="chat-attachment"><a href="${fileUrl}" download="${fileName}" class="chat-attachment-file" target="_blank">
+            <span class="file-card-icon">${icon}</span>
+            <div class="file-card-details"><span class="file-card-name">${fileName}</span><span class="file-card-size">${fileSize}</span></div>
+            <span class="file-card-dl-btn">💾 DOWNLOAD</span></a></div>`;
+    }
+}
+
 function updateReceipt(msgId, status) {
     const el = pendingReceipts.get(msgId);
     if (!el) return;
     if (status === "partial") {
-        el.textContent = "😃";
-        el.title = "Delivered to some";
-        el.classList.add("receipt-partial");
+        el.textContent = "😃"; el.title = "Delivered to some"; el.classList.add("receipt-partial");
     } else if (status === "delivered_all") {
-        el.textContent = "😎";
-        el.title = "Delivered to all";
-        el.classList.add("receipt-delivered");
+        el.textContent = "😎"; el.title = "Delivered to all"; el.classList.add("receipt-delivered");
     }
     pendingReceipts.delete(msgId);
 }
@@ -456,21 +595,17 @@ function updateUserList(users) {
     userList.innerHTML = "";
     const count = users.length;
     if (headerSubtitle) headerSubtitle.textContent = `${count} PLAYER${count !== 1 ? "S" : ""} ONLINE`;
-    if (onlineBadge) onlineBadge.textContent = count;
+    if (onlineBadge)    onlineBadge.textContent = count;
 
-    users.forEach((item) => {
-        const username = typeof item === "object" ? item.username : item;
-        const avatarId = typeof item === "object" ? item.avatar : "wizard";
+    users.forEach(item => {
+        const username  = typeof item === "object" ? item.username : item;
+        const avatarId  = typeof item === "object" ? item.avatar   : "wizard";
         const avatarData = getAvatarData(avatarId, username);
-
         const li = document.createElement("li");
         const isYou = username === currentUsername;
         if (isYou) li.classList.add("is-you");
-
         li.innerHTML = `
-            <div class="user-avatar" style="background:${avatarData.bg}; border-color:${avatarData.border}">
-                ${avatarData.icon}
-            </div>
+            <div class="user-avatar" style="background:${avatarData.bg}; border-color:${avatarData.border}">${avatarData.icon}</div>
             <span class="user-name">${escapeHtml(username)}</span>
             ${isYou ? '<span class="user-you-tag">YOU</span>' : ""}`;
         userList.appendChild(li);
@@ -480,7 +615,7 @@ function updateUserList(users) {
 function updateConnectionStatus(status) {
     if (!statusDot || !statusText) return;
     statusDot.className = "status-dot " + status;
-    const labels = { connected: "ONLINE", disconnected: "OFFLINE", reconnecting: "WAIT..." };
+    const labels = { connected:"ONLINE", disconnected:"OFFLINE", reconnecting:"WAIT..." };
     statusText.textContent = labels[status] || status.toUpperCase();
 }
 
@@ -502,7 +637,7 @@ function scrollToBottom() {
     messagesScroll.scrollTop = messagesScroll.scrollHeight;
 }
 
-function renderHistory(messages) {
+async function renderHistory(messages) {
     if (!messages || !messages.length) return;
 
     const sep = document.createElement("div");
@@ -510,9 +645,23 @@ function renderHistory(messages) {
     sep.innerHTML = `<div class="message-bubble"><p class="message-text">--- PREV MESSAGES ---</p></div>`;
     messagesScroll.appendChild(sep);
 
-    messages.forEach((msg) => {
-        if (msg.type === "message") addChatMessage(msg.username, msg.text, msg.timestamp, msg.avatar, msg.attachment);
-    });
+    for (const msg of messages) {
+        if (msg.type === "message") {
+            // Decrypt history messages
+            const plaintext = await decryptMessage(msg.ciphertext, msg.iv);
+            if (plaintext === null) {
+                addChatMessage(msg.username, "[⚠ DECRYPTION FAILED — MESSAGE TAMPERED]",
+                    msg.timestamp, msg.avatar, null, false, true);
+                continue;
+            }
+            const material = msg.ciphertext + msg.iv;
+            const sigValid  = msg.public_key
+                ? await verifySignature(material, msg.signature, msg.public_key)
+                : false;
+            addChatMessage(msg.username, plaintext, msg.timestamp, msg.avatar,
+                msg.attachment, sigValid, msg.tampered === true);
+        }
+    }
 
     const sep2 = document.createElement("div");
     sep2.className = "message system";
@@ -521,9 +670,7 @@ function renderHistory(messages) {
     scrollToBottom();
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  TYPING
-// ══════════════════════════════════════════════════════════════════
+// ── Typing ────────────────────────────────────────────────────────────────────
 
 function showTypingIndicator(username) {
     typingTextEl.textContent = `${username.toUpperCase()} TYPING`;
@@ -548,33 +695,23 @@ function sendTypingEvent() {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  GAMIFICATION
-// ══════════════════════════════════════════════════════════════════
+// ── Gamification ──────────────────────────────────────────────────────────────
 
-function gainXP(amount) {
-    totalXP += amount;
-    updateXPBar();
-    checkLevelUp();
-}
+function gainXP(amount) { totalXP += amount; updateXPBar(); checkLevelUp(); }
 
 function updateXPBar() {
-    const rank = getCurrentRank();
+    const rank     = getCurrentRank();
     const xpInLevel = totalXP - rank.xp;
-    const xpNeeded = rank.next - rank.xp;
-    const pct = rank.level === 6 ? 100 : Math.min(100, (xpInLevel / xpNeeded) * 100);
-
+    const xpNeeded  = rank.next - rank.xp;
+    const pct       = rank.level === 6 ? 100 : Math.min(100, (xpInLevel / xpNeeded) * 100);
     if (xpBarFill) xpBarFill.style.width = `${pct.toFixed(1)}%`;
-    if (xpValue) xpValue.textContent = `${totalXP}/${rank.next}`;
+    if (xpValue)   xpValue.textContent   = `${totalXP}/${rank.next}`;
     if (rankNameEl) rankNameEl.textContent = rank.name;
 }
 
 function getCurrentRank() {
     let current = RANKS[0];
-    for (const r of RANKS) {
-        if (totalXP >= r.xp) current = r;
-        else break;
-    }
+    for (const r of RANKS) { if (totalXP >= r.xp) current = r; else break; }
     return current;
 }
 
@@ -589,35 +726,19 @@ function checkLevelUp() {
     }
 }
 
-function incrementStreak() {
-    streakCount++;
-    if (streakEl) streakEl.textContent = streakCount;
-    if (streakCount % 5 === 0) gainXP(10);
-}
-
-function incrementMessageCount() {
-    messagesSent++;
-    if (msgCountEl) msgCountEl.textContent = messagesSent;
-    gainXP(2);
-    incrementStreak();
-}
+function incrementStreak()      { streakCount++; if (streakEl) streakEl.textContent = streakCount; if (streakCount % 5 === 0) gainXP(10); }
+function incrementMessageCount(){ messagesSent++; if (msgCountEl) msgCountEl.textContent = messagesSent; gainXP(2); incrementStreak(); }
 
 function startSessionTimer() {
     sessionStart = Date.now();
     sessionTimer = setInterval(() => {
         const min = Math.floor((Date.now() - sessionStart) / 60000);
-        if (sessionTimeEl) {
-            sessionTimeEl.textContent = min >= 60
-                ? `${Math.floor(min / 60)}H${min % 60}M`
-                : `${min}M`;
-        }
+        if (sessionTimeEl) sessionTimeEl.textContent = min >= 60 ? `${Math.floor(min/60)}H${min%60}M` : `${min}M`;
         gainXP(1);
     }, 60000);
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  UTILS
-// ══════════════════════════════════════════════════════════════════
+// ── Utils ─────────────────────────────────────────────────────────────────────
 
 function escapeHtml(text) {
     const d = document.createElement("div");
@@ -627,108 +748,127 @@ function escapeHtml(text) {
 
 function getAvatarColor(username) {
     let hash = 0;
-    for (let i = 0; i < username.length; i++) {
-        hash = username.charCodeAt(i) + ((hash << 5) - hash);
-    }
+    for (let i = 0; i < username.length; i++) hash = username.charCodeAt(i) + ((hash << 5) - hash);
     return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-/** Returns the current wall-clock time as HH:MM:SS (matches server format). */
-function currentTime() {
-    return new Date().toLocaleTimeString("en-GB");
+function currentTime() { return new Date().toLocaleTimeString("en-GB"); }
+
+function formatBytes(bytes) {
+    if (bytes === 0) return "0 B";
+    const k = 1024, sizes = ["B","KB","MB","GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-function sendMessage() {
-    const text = messageInput.value.trim();
-    const hasAttachment = typeof attachmentData !== "undefined" && attachmentData !== null;
-    if (!text && !hasAttachment) return;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        // Generate a local ID to track this bubble's receipt
-        const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        ws.send(JSON.stringify({
-            type: "message",
-            text,
-            client_msg_id: msgId,
-            attachment: attachmentData || null
-        }));
-        playSound("message");
-        const attachmentSnapshot = attachmentData || null;
-        addOwnMessageOptimistic(text, msgId, attachmentSnapshot);
-        messageInput.value = "";
-        clearPendingAttachment();
-        messageInput.focus();
-        emojiPicker.classList.remove("open");
-        emojiToggleBtn.classList.remove("active");
-        incrementMessageCount();
-    }
+function getFileIcon(fileType, fileName) {
+    if (fileType.includes("pdf"))                                                   return "📄";
+    if (fileType.includes("word") || fileName.endsWith(".docx"))                   return "📝";
+    if (fileType.includes("zip") || fileType.includes("rar"))                      return "🗜️";
+    if (fileType.includes("text") || fileName.endsWith(".txt"))                    return "🗒️";
+    if (fileType.includes("spreadsheet") || fileName.endsWith(".xlsx"))            return "📊";
+    return "📁";
 }
+
+// ── Send Message (encrypt + sign) ────────────────────────────────────────────
+
+async function sendMessage() {
+    const text         = messageInput.value.trim();
+    const hasAttachment = attachmentData !== null;
+    if (!text && !hasAttachment) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!cryptoReady) { console.error("[Send] Crypto not ready"); return; }
+
+    const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+    // 1. Encrypt
+    const { ciphertext, iv } = await encryptMessage(text);
+
+    // 2. Sign (over ciphertext + iv — same material the server verifies)
+    const material  = ciphertext + iv;
+    const signature = await signMaterial(material);
+
+    // 3. Send
+    ws.send(JSON.stringify({
+        type:         "message",
+        ciphertext,
+        iv,
+        signature,
+        public_key:   myPublicKeyJwk,
+        client_msg_id: msgId,
+        attachment:   attachmentData || null,
+    }));
+
+    playSound("message");
+    const attachmentSnapshot = attachmentData;
+    addOwnMessageOptimistic(text, msgId, attachmentSnapshot);
+    messageInput.value = "";
+    clearPendingAttachment();
+    messageInput.focus();
+    emojiPicker.classList.remove("open");
+    emojiToggleBtn.classList.remove("active");
+    incrementMessageCount();
+}
+
+// ── Audio ─────────────────────────────────────────────────────────────────────
 
 function playNotificationSound() {
     try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = "square";  // 8-bit square wave
-        osc.frequency.value = 440;
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.type = "square"; osc.frequency.value = 440;
         gain.gain.setValueAtTime(0.1, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.3);
-    } catch (e) { }
+        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
+    } catch (e) {}
 }
 
 function playLevelUpSound() {
     try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const notes = [262, 330, 392, 523];
-        notes.forEach((freq, i) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.type = "square";
-            osc.frequency.value = freq;
+        [262,330,392,523].forEach((freq, i) => {
+            const osc = ctx.createOscillator(), gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.type = "square"; osc.frequency.value = freq;
             const t = ctx.currentTime + i * 0.12;
             gain.gain.setValueAtTime(0.12, t);
             gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
-            osc.start(t);
-            osc.stop(t + 0.12);
+            osc.start(t); osc.stop(t + 0.12);
         });
-    } catch (e) { }
+    } catch (e) {}
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  EVENT LISTENERS
-// ══════════════════════════════════════════════════════════════════
+// ── Event Listeners ───────────────────────────────────────────────────────────
 
-joinBtn.addEventListener("click", () => {
+joinBtn.addEventListener("click", async () => {
     const username = usernameInput.value.trim();
-    if (!username) {
-        showLoginError("ENTER A NAME FIRST!");
+    if (!username) { showLoginError("ENTER A NAME FIRST!"); return; }
+
+    loginError.textContent  = "";
+    joinBtn.disabled        = true;
+    joinBtnText.textContent = "LOADING CRYPTO...";
+
+    try {
+        await initCrypto();
+    } catch (err) {
+        showLoginError("CRYPTO INIT FAILED — check console");
         return;
     }
-    loginError.textContent = "";
-    joinBtn.disabled = true;
+
     joinBtnText.textContent = "CONNECTING...";
-    currentUsername = username;
+    currentUsername  = username;
     isIntentionalClose = false;
-    isJoined = false;
+    isJoined         = false;
     connect();
 });
 
-usernameInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") joinBtn.click();
-});
-
+usernameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") joinBtn.click(); });
 sendBtn.addEventListener("click", sendMessage);
 
 messageInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 
 messageInput.addEventListener("input", () => {
@@ -743,10 +883,7 @@ emojiToggleBtn.addEventListener("click", (e) => {
 
 document.getElementById("emoji-grid").addEventListener("click", (e) => {
     const target = e.target.closest(".emoji");
-    if (target) {
-        messageInput.value += target.textContent;
-        messageInput.focus();
-    }
+    if (target) { messageInput.value += target.textContent; messageInput.focus(); }
 });
 
 if (attachmentToggleBtn && fileInput) {
@@ -755,14 +892,11 @@ if (attachmentToggleBtn && fileInput) {
     fileInput.addEventListener("change", async () => {
         if (!fileInput.files || !fileInput.files[0]) return;
         pendingFile = fileInput.files[0];
-
-        // Show preview bar immediately with uploading state
         attachmentFilename.textContent = pendingFile.name;
         attachmentFilesize.textContent = "(UPLOADING...)";
         attachmentPreviewBar.classList.remove("hidden");
         attachmentData = null;
 
-        // Upload the file to the server
         try {
             const formData = new FormData();
             formData.append("file", pendingFile);
@@ -777,8 +911,7 @@ if (attachmentToggleBtn && fileInput) {
             console.error("[Upload] failed:", err);
             attachmentFilename.textContent = "UPLOAD FAILED";
             attachmentFilesize.textContent = "";
-            attachmentData = null;
-            pendingFile = null;
+            attachmentData = null; pendingFile = null;
         }
     });
 
@@ -794,66 +927,52 @@ document.addEventListener("click", (e) => {
     }
 });
 
-window.addEventListener("focus", () => { isTabFocused = true; });
-window.addEventListener("blur", () => { isTabFocused = false; });
+window.addEventListener("focus", () => { isTabFocused = true;  });
+window.addEventListener("blur",  () => { isTabFocused = false; });
 
-// ── Info modal ────────────────────────────────────────────────
-infoBtn.addEventListener("click", () => {
-    infoModalOverlay.classList.remove("hidden");
-});
-
-infoModalClose.addEventListener("click", () => {
-    infoModalOverlay.classList.add("hidden");
-});
-
-// Close on backdrop click
+// ── Info modal ────────────────────────────────────────────────────────────────
+infoBtn.addEventListener("click", () => infoModalOverlay.classList.remove("hidden"));
+infoModalClose.addEventListener("click", () => infoModalOverlay.classList.add("hidden"));
 infoModalOverlay.addEventListener("click", (e) => {
     if (e.target === infoModalOverlay) infoModalOverlay.classList.add("hidden");
 });
-
-// Close on Escape key
 document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") infoModalOverlay.classList.add("hidden");
 });
 
-// ── Leave button ──────────────────────────────────────────────
-leaveBtn.addEventListener("click", () => {
-    leaveChat();
-});
+// ── Leave button ──────────────────────────────────────────────────────────────
+leaveBtn.addEventListener("click", leaveChat);
 
 function leaveChat() {
-    // Stop session timer
     if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
     playSound("leave");
-    // Close WebSocket
     disconnect();
-    // Reset gamification state
+    // Reset gamification
     totalXP = 0; streakCount = 0; messagesSent = 0; currentLevel = 1;
     if (xpBarFill) xpBarFill.style.width = "0%";
-    if (xpValue) xpValue.textContent = "0/50";
+    if (xpValue)   xpValue.textContent   = "0/50";
     if (rankNameEl) rankNameEl.textContent = "NEWBIE";
     if (msgCountEl) msgCountEl.textContent = "0";
-    if (streakEl) streakEl.textContent = "0";
+    if (streakEl)   streakEl.textContent   = "0";
     if (sessionTimeEl) sessionTimeEl.textContent = "0M";
-    // Clear chat messages
+    // Reset crypto state
+    aesKey = null; ecdsaKeyPair = null; myPublicKeyJwk = null; cryptoReady = false;
+    setCryptoStatusUI(false);
+    // Clear UI
     messagesScroll.innerHTML = "";
-    // Reset username & flags
-    currentUsername = "";
-    isJoined = false;
-    isIntentionalClose = false;
-    // Re-enable join button
-    joinBtn.disabled = false;
-    joinBtnText.textContent = "► START QUEST";
+    currentUsername = ""; isJoined = false; isIntentionalClose = false;
+    joinBtn.disabled = false; joinBtnText.textContent = "► START QUEST";
     loginError.textContent = "";
-    // Flip screens
     chatScreen.classList.add("hidden");
     loginScreen.classList.remove("hidden");
     usernameInput.value = "";
     usernameInput.focus();
 }
 
+// ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener("load", () => {
     usernameInput.focus();
     renderAvatarPicker();
     updateXPBar();
+    setCryptoStatusUI(false); // shown as inactive until join
 });

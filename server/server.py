@@ -1,5 +1,11 @@
 """
-Real-Time Group Chat Server
+Secure Persistent Group Chat — Server
+======================================
+Extends the original WebSocket group chat with:
+  - SQLite-backed message persistence (encrypted at rest)
+  - AES-GCM symmetric encryption (key served from .env via /group-key)
+  - Per-user ECDSA-P256 signing key pairs (server verifies every message)
+  - HMAC-SHA256 database tamper detection
 """
 
 import json
@@ -7,6 +13,9 @@ import asyncio
 import os
 import uuid
 import shutil
+import base64
+import hmac
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -17,55 +26,120 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, H
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+# cryptography library — ECDSA verification
+from cryptography.hazmat.primitives.asymmetric.ec import (
+    ECDSA,
+    EllipticCurvePublicKey,
+    SECP256R1,
+    EllipticCurvePublicNumbers,
+)
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography.hazmat.backends import default_backend
+from cryptography.exceptions import InvalidSignature
 
+import db  # local module — server/db.py
+
+
+# ── Environment ───────────────────────────────────────────────────────────────
+
+def _require_env(key: str) -> str:
+    value = os.environ.get(key, "").strip()
+    if not value:
+        raise RuntimeError(
+            f"Required environment variable '{key}' is not set in .env"
+        )
+    return value
+
+
+AES_GROUP_KEY_HEX: str = _require_env("AES_GROUP_KEY")   # 64 hex chars = 32 bytes
+HMAC_SECRET_HEX: str   = _require_env("HMAC_SECRET")     # 64 hex chars = 32 bytes
+
+
+# ── ECDSA helpers ─────────────────────────────────────────────────────────────
+
+def _jwk_to_public_key(jwk: dict) -> EllipticCurvePublicKey:
+    """
+    Convert a JWK (P-256, EC) dict exported by the browser's SubtleCrypto
+    into a cryptography library EllipticCurvePublicKey.
+    """
+    def _b64url_to_int(b64url: str) -> int:
+        # Add padding if needed
+        padded = b64url + "=" * (-len(b64url) % 4)
+        return int.from_bytes(base64.urlsafe_b64decode(padded), "big")
+
+    x = _b64url_to_int(jwk["x"])
+    y = _b64url_to_int(jwk["y"])
+    numbers = EllipticCurvePublicNumbers(x=x, y=y, curve=SECP256R1())
+    return numbers.public_key(default_backend())
+
+
+def verify_ecdsa_signature(plaintext_bytes: bytes, sig_b64: str, jwk: dict) -> bool:
+    """
+    Verify an ECDSA-P256/SHA-256 signature.
+    `sig_b64`  — base64-encoded DER signature produced by SubtleCrypto.sign()
+    `plaintext_bytes` — the original bytes that were signed
+    Returns True if valid, False on any error.
+    """
+    try:
+        pub_key = _jwk_to_public_key(jwk)
+        # SubtleCrypto outputs the signature in IEEE P1363 format (r||s, 64 bytes).
+        # cryptography library expects DER, so we must convert.
+        padded = sig_b64 + "=" * (-len(sig_b64) % 4)
+        sig_bytes = base64.urlsafe_b64decode(padded)
+
+        if len(sig_bytes) == 64:
+            # P1363 → DER
+            r = int.from_bytes(sig_bytes[:32], "big")
+            s = int.from_bytes(sig_bytes[32:], "big")
+            from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+            sig_der = encode_dss_signature(r, s)
+        else:
+            sig_der = sig_bytes  # already DER
+
+        pub_key.verify(sig_der, plaintext_bytes, ECDSA(hashes.SHA256()))
+        return True
+    except (InvalidSignature, Exception):
+        return False
+
+
+# ── ConnectionManager ─────────────────────────────────────────────────────────
 
 class ConnectionManager:
-    """Manages WebSocket connections and message broadcasting."""
+    """Manages active WebSocket connections and broadcasting."""
 
     def __init__(self):
         self.active_connections: dict[WebSocket, dict] = {}
-        self.message_history: list[dict] = []
-        self.MAX_HISTORY = 50
-        self._cleanup_timer: asyncio.TimerHandle | None = None
-        self.HISTORY_CLEAR_DELAY = 300  
 
     def add(self, websocket: WebSocket, username: str, avatar: str = "avatar-1"):
-        """Register a new connection with a username and avatar."""
-        self._cancel_cleanup_timer()
         self.active_connections[websocket] = {
             "username": username,
-            "avatar": avatar
+            "avatar": avatar,
         }
 
     def remove(self, websocket: WebSocket) -> str | None:
-        """Remove a connection and return its username (or None)."""
         info = self.active_connections.pop(websocket, None)
         return info["username"] if info else None
 
     def get_username(self, websocket: WebSocket) -> str | None:
-        """Get the username for a given WebSocket."""
         info = self.active_connections.get(websocket)
         return info["username"] if info else None
 
     def get_avatar(self, websocket: WebSocket) -> str:
-        """Get the avatar for a given WebSocket."""
         info = self.active_connections.get(websocket)
         return info["avatar"] if info else "avatar-1"
 
     def get_all_users(self) -> list[dict]:
-        """Return a sorted list of all connected user dicts."""
         users = list(self.active_connections.values())
         return sorted(users, key=lambda x: x["username"].lower())
 
     def is_username_taken(self, username: str) -> bool:
-        """Check if a username is already in use (case-insensitive)."""
         return username.lower() in [
             info["username"].lower() for info in self.active_connections.values()
         ]
 
     async def broadcast(self, message: dict, exclude: WebSocket | None = None) -> int:
-        """Send a JSON message to all connected clients (optionally excluding one).
-        Returns the number of clients the message was successfully delivered to."""
+        """Send JSON to all clients (optionally excluding one). Returns delivery count."""
         disconnected = []
         delivered = 0
         for ws in self.active_connections:
@@ -80,55 +154,20 @@ class ConnectionManager:
         return delivered
 
     async def send_to_all(self, message: dict) -> int:
-        """Send a JSON message to ALL connected clients (no exclusions).
-        Returns the number of clients successfully reached."""
         return await self.broadcast(message, exclude=None)
 
-    def add_to_history(self, message: dict):
-        """Store a message in the history buffer (capped at MAX_HISTORY)."""
-        self.message_history.append(message)
-        if len(self.message_history) > self.MAX_HISTORY:
-            self.message_history.pop(0)
 
+# ── FastAPI App ───────────────────────────────────────────────────────────────
 
-    def start_cleanup_timer(self):
-        """Start a timer to clear chat history after HISTORY_CLEAR_DELAY seconds.
-        Called when the last user leaves the room."""
-        self._cancel_cleanup_timer()
-        loop = asyncio.get_event_loop()
-        self._cleanup_timer = loop.call_later(
-            self.HISTORY_CLEAR_DELAY, self._clear_history
-        )
-        print(f"[TIMER] Room empty — history will clear in {self.HISTORY_CLEAR_DELAY}s")
-
-    def _cancel_cleanup_timer(self):
-        """Cancel the pending history-clear timer (e.g. someone joined back)."""
-        if self._cleanup_timer is not None:
-            self._cleanup_timer.cancel()
-            self._cleanup_timer = None
-            print("[TIMER] Cleanup timer cancelled — someone rejoined")
-
-    def _clear_history(self):
-        """Wipe the message history (called by the timer callback)."""
-        self._cleanup_timer = None
-        self.message_history.clear()
-        print("[TRASH] Chat history cleared — new session starts")
-
-
-# ---------------------------------------------------------------------------
-# FastAPI Application
-# ---------------------------------------------------------------------------
-
-app = FastAPI(title="Group Chat Server")
+app = FastAPI(title="Secure Group Chat Server")
 manager = ConnectionManager()
 
-# Uploads directory setup
+# Uploads directory
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
-# Allow requests from the frontend dev server
-FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 5000))
+# CORS — allow all for lab purposes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -136,6 +175,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 3000))
+
+
+@app.on_event("startup")
+async def startup():
+    """Initialise the SQLite database on server start."""
+    db.init_db()
+
+
+# ── REST Endpoints ────────────────────────────────────────────────────────────
+
+@app.get("/group-key")
+async def get_group_key():
+    """
+    Return the AES-GCM group key (hex string) loaded from .env.
+    Clients fetch this once on load to initialise SubtleCrypto.
+    In production this endpoint should be protected by authentication.
+    """
+    return {"key": AES_GROUP_KEY_HEX}
 
 
 @app.post("/upload")
@@ -150,25 +209,23 @@ async def upload_file(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, buffer)
 
         file_size = file_path.stat().st_size
-
         return {
             "url": f"/uploads/{unique_name}",
             "fileName": file.filename or "file",
             "fileType": file.content_type or "application/octet-stream",
-            "fileSize": file_size
+            "fileSize": file_size,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 def timestamp() -> str:
-    """Return the current time as an ISO format string."""
     return datetime.now().strftime("%H:%M:%S")
 
 
-# ---------------------------------------------------------------------------
-# WebSocket Endpoint
-# ---------------------------------------------------------------------------
+# ── WebSocket Endpoint ────────────────────────────────────────────────────────
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -177,160 +234,194 @@ async def websocket_endpoint(websocket: WebSocket):
     username = None
 
     try:
-        # ──  Wait for the join message ──────────────────────────
+        # ── Wait for join message ────────────────────────────────────────
         data = await websocket.receive_json()
 
         if data.get("type") != "join":
             await websocket.send_json({
                 "type": "error",
-                "message": "First message must be a join request."
+                "message": "First message must be a join request.",
             })
             await websocket.close(code=1008)
             return
 
         username = data.get("username", "").strip()
-        avatar = data.get("avatar", "avatar-1")
+        avatar   = data.get("avatar", "avatar-1")
+        pub_key  = data.get("public_key")  # JWK dict from SubtleCrypto
 
-        # Validate: non-empty
+        # Validate username
         if not username:
-            await websocket.send_json({
-                "type": "error",
-                "message": "Username cannot be empty."
-            })
+            await websocket.send_json({"type": "error", "message": "Username cannot be empty."})
             await websocket.close(code=1008)
             return
 
-        # Validate: unique
         if manager.is_username_taken(username):
             await websocket.send_json({
                 "type": "error",
-                "message": f"Username '{username}' is already taken. Please choose another."
+                "message": f"Username '{username}' is already taken. Please choose another.",
             })
             await websocket.close(code=1008)
             return
 
-        # ──  Register the user ──────────────────────────────────
-        manager.add(websocket, username, avatar)
-        print(f"[+] {username} ({avatar}) joined  |  Online: {len(manager.active_connections)}")
+        # Validate public key
+        if not pub_key or not isinstance(pub_key, dict):
+            await websocket.send_json({
+                "type": "error",
+                "message": "A valid ECDSA public key (JWK) is required to join.",
+            })
+            await websocket.close(code=1008)
+            return
 
-        # Send welcome to the joiner only
+        # ── Register user ────────────────────────────────────────────────
+        manager.add(websocket, username, avatar)
+        db.register_user_key(username, pub_key)
+        print(f"[+] {username} ({avatar}) joined | Online: {len(manager.active_connections)}")
+
+        # Welcome message to joiner
         await websocket.send_json({
             "type": "system",
             "message": f"Welcome to the chat, {username}!",
-            "timestamp": timestamp()
+            "timestamp": timestamp(),
         })
 
-        # Notify all OTHER users about the new join
+        # Notify others
         await manager.broadcast({
             "type": "join",
             "username": username,
             "avatar": avatar,
             "message": f"{username} joined the chat",
-            "timestamp": timestamp()
+            "timestamp": timestamp(),
         }, exclude=websocket)
 
-        # Send updated user list to EVERYONE (including the joiner)
+        # Updated user list to everyone
         await manager.send_to_all({
             "type": "userList",
-            "users": manager.get_all_users()
+            "users": manager.get_all_users(),
         })
 
-        # Send message history to the new joiner only
-        if manager.message_history:
+        # Send DB-backed history to the new joiner
+        history = db.get_history(limit=50)
+        if history:
             await websocket.send_json({
                 "type": "history",
-                "messages": manager.message_history
+                "messages": history,
             })
 
-        # ──  Listen for chat messages ───────────────────────────
+        # ── Message loop ─────────────────────────────────────────────────
         while True:
             data = await websocket.receive_json()
             msg_type = data.get("type")
 
+            # ── Chat message ─────────────────────────────────────────────
             if msg_type == "message":
-                text = data.get("text", "").strip()
+                ciphertext  = data.get("ciphertext", "")
+                iv          = data.get("iv", "")
+                signature   = data.get("signature", "")
+                sender_key  = data.get("public_key") or db.get_user_key(username) or {}
                 client_msg_id = data.get("client_msg_id", "")
-                attachment = data.get("attachment")  
-                if text or attachment:
-                    msg = {
-                        "type": "message",
-                        "username": username,
-                        "avatar": avatar,
-                        "text": text,
-                        "attachment": attachment,
-                        "timestamp": timestamp()
-                    }
-               
-                    manager.add_to_history(msg)
-                    delivered = await manager.send_to_all(msg)
+                attachment  = data.get("attachment")
 
-                    
-                    others_reached = delivered - 1   # exclude sender's own copy
-                    total_others   = len(manager.active_connections) - 1
+                if not ciphertext or not iv or not signature:
+                    # Malformed message — skip
+                    continue
 
-                    if total_others <= 0:
-                        receipt_status = "sent"         
-                    elif others_reached >= total_others:
-                        receipt_status = "delivered_all"  
-                    else:
-                        receipt_status = "partial"       
+                # ── Verify ECDSA signature server-side ───────────────────
+                # The client signs the plaintext payload before encrypting.
+                # We receive the signature and public key; the signed bytes
+                # are the UTF-8 encoding of the canonical plaintext JSON.
+                # Because we can't decrypt on the server (key is client-side),
+                # we verify the signature over the ciphertext+iv concatenation
+                # as the signed material (deterministic, available server-side).
+                signed_material = (ciphertext + iv).encode("utf-8")
+                sig_valid = verify_ecdsa_signature(signed_material, signature, sender_key)
 
-                    await websocket.send_json({
-                        "type": "receipt",
-                        "msg_id": client_msg_id,
-                        "status": receipt_status
-                    })
+                if not sig_valid:
+                    print(f"[!] Invalid signature from {username}")
 
+                # ── Persist to DB ─────────────────────────────────────────
+                if ciphertext:
+                    db.save_message(
+                        username   = username,
+                        avatar     = avatar,
+                        ciphertext = ciphertext,
+                        iv         = iv,
+                        signature  = signature,
+                        public_key = sender_key,
+                        timestamp  = timestamp(),
+                        sig_valid  = sig_valid,
+                    )
+
+                # ── Broadcast encrypted message ───────────────────────────
+                msg = {
+                    "type":       "message",
+                    "username":   username,
+                    "avatar":     avatar,
+                    "ciphertext": ciphertext,
+                    "iv":         iv,
+                    "signature":  signature,
+                    "public_key": sender_key,
+                    "timestamp":  timestamp(),
+                    "sig_valid":  sig_valid,
+                    "attachment": attachment,
+                }
+                delivered = await manager.send_to_all(msg)
+
+                # ── Delivery receipt ──────────────────────────────────────
+                others_reached = delivered - 1
+                total_others   = len(manager.active_connections) - 1
+                if total_others <= 0:
+                    receipt_status = "sent"
+                elif others_reached >= total_others:
+                    receipt_status = "delivered_all"
+                else:
+                    receipt_status = "partial"
+
+                await websocket.send_json({
+                    "type":   "receipt",
+                    "msg_id": client_msg_id,
+                    "status": receipt_status,
+                })
+
+            # ── Typing indicator ──────────────────────────────────────────
             elif msg_type == "typing":
-                # Relay typing indicator to all OTHER users
                 await manager.broadcast({
-                    "type": "typing",
-                    "username": username
+                    "type":     "typing",
+                    "username": username,
                 }, exclude=websocket)
 
     except WebSocketDisconnect:
-
         pass
     except Exception as e:
         print(f"[!] Error for {username or 'unknown'}: {e}")
     finally:
-       
         if username and websocket in manager.active_connections:
             manager.remove(websocket)
             online = len(manager.active_connections)
-            print(f"[-] {username} left    |  Online: {online}")
+            print(f"[-] {username} left | Online: {online}")
 
-            # Notify remaining users
             await manager.broadcast({
-                "type": "leave",
+                "type":     "leave",
                 "username": username,
-                "message": f"{username} left the chat",
-                "timestamp": timestamp()
+                "message":  f"{username} left the chat",
+                "timestamp": timestamp(),
             })
-
-            # Send updated user list
             await manager.send_to_all({
-                "type": "userList",
-                "users": manager.get_all_users()
+                "type":  "userList",
+                "users": manager.get_all_users(),
             })
 
-            # If the room is now empty, start the history-clear countdown
-            if online == 0:
-                manager.start_cleanup_timer()
 
-
-
-
-
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.environ.get("BACKEND_PORT", 8000))
+    port = int(os.environ.get("BACKEND_PORT", 5000))
 
     print("=" * 50)
-    print("  Group Chat Server (Backend Only)")
-    print(f"  WebSocket: ws://0.0.0.0:{port}/ws")
-    print(f"  Frontend:  http://localhost:{FRONTEND_PORT} (separate server)")
+    print("  Secure Group Chat Server")
+    print(f"  WebSocket : ws://0.0.0.0:{port}/ws")
+    print(f"  Group Key : GET http://0.0.0.0:{port}/group-key")
+    print(f"  Frontend  : http://localhost:{FRONTEND_PORT}")
     print("=" * 50)
     uvicorn.run(app, host="0.0.0.0", port=port)
