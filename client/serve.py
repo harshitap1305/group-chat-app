@@ -34,10 +34,11 @@ if __name__ == "__main__":
     print("  Frontend Server")
     print(f"  URL: https://localhost:{FRONTEND_PORT}")
     print("=" * 50)
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=FRONTEND_PORT,
-        ssl_keyfile="../key.pem",
-        ssl_certfile="../cert.pem"
+        ssl_keyfile=os.path.join(BASE_DIR, "key.pem"),
+        ssl_certfile=os.path.join(BASE_DIR, "cert.pem")
     )
