@@ -98,6 +98,16 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
+### 3. Generate SSL Certificates (Required for Crypto)
+
+Because modern browsers enforce strict security for the `crypto.subtle` API, the server must be run over HTTPS.
+
+```bash
+# From the project root
+python generate_certs.py
+```
+*(This will generate `cert.pem` and `key.pem` in your project root.)*
+
 Edit `.env` if you need different ports.
 
 ### 3. Start the Backend (Terminal 1)
