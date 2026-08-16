@@ -173,6 +173,16 @@ def get_room(room_id: str) -> dict | None:
     }
 
 
+def update_room_creator_if_system(room_id: str, username: str) -> None:
+    """If a room's created_by is 'system' or empty, set it to username."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE rooms SET created_by = ? WHERE id = ? AND (created_by = 'system' OR created_by = '' OR created_by IS NULL)",
+            (username, room_id),
+        )
+
+
+
 def list_rooms() -> list[dict]:
     """Return all public rooms (ordered newest first)."""
     with _connect() as conn:
@@ -408,9 +418,43 @@ def clear_room_history(room_id: str) -> None:
     print(f"[DB] Room '{room_id}' message history cleared.")
 
 
+def clear_room_history_by_creator(room_id: str, username: str) -> bool:
+    """
+    Clear all stored messages for a specific room.
+    Succeeds ONLY if the requesting user is the creator of the room.
+    """
+    with _connect() as conn:
+        room = conn.execute(
+            "SELECT created_by FROM rooms WHERE id = ?", (room_id,)
+        ).fetchone()
+        if not room or room["created_by"].lower() != username.lower():
+            return False
+        conn.execute("DELETE FROM messages WHERE room_id = ?", (room_id,))
+    print(f"[DB] Message history for room '{room_id}' cleared by creator '{username}'.")
+    return True
+
+
+def delete_room(room_id: str, username: str) -> bool:
+    """
+    Permanently delete a chat room and all its messages.
+    Succeeds ONLY if the requesting user is the creator of the room.
+    """
+    with _connect() as conn:
+        room = conn.execute(
+            "SELECT created_by FROM rooms WHERE id = ?", (room_id,)
+        ).fetchone()
+        if not room or room["created_by"].lower() != username.lower():
+            return False
+        conn.execute("DELETE FROM messages WHERE room_id = ?", (room_id,))
+        conn.execute("DELETE FROM rooms WHERE id = ? AND created_by = ? COLLATE NOCASE", (room_id, username))
+    print(f"[DB] Room '{room_id}' and all messages deleted by creator '{username}'.")
+    return True
+
+
 def clear_history() -> None:
     """Delete ALL messages and user keys. Legacy fallback."""
     with _connect() as conn:
         conn.execute("DELETE FROM messages")
         conn.execute("DELETE FROM user_keys")
     print("[DB] All message history and user keys cleared.")
+

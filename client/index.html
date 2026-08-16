@@ -240,7 +240,19 @@
                     <div class="room-badge-name" id="room-badge-name">ROOM</div>
                 </div>
 
+                <!-- Room Owner Actions (visible to room creator only) -->
+                <div class="owner-actions-wrap hidden" id="owner-actions-wrap">
+                    <div class="owner-badge-title">👑 ROOM CREATOR</div>
+                    <button class="pixel-btn btn-sm btn-warning" id="clear-room-history-btn" title="Clear all chat history in this room">
+                        🧹 CLEAR HISTORY
+                    </button>
+                    <button class="pixel-btn btn-sm btn-danger" id="delete-room-btn" title="Permanently delete this chat room">
+                        🗑 DELETE ROOM
+                    </button>
+                </div>
+
                 <div class="panel-divider"></div>
+
 
                 <!-- XP Section -->
                 <div class="xp-block">
@@ -462,8 +474,22 @@
         </div>
     </div>
 
+    <!-- In-App Retro Confirmation Modal -->
+    <div class="confirm-modal-overlay hidden" id="confirm-modal-overlay">
+        <div class="confirm-modal-box">
+            <div class="confirm-modal-header" id="confirm-modal-title">⚠️ CONFIRM ACTION</div>
+            <div class="confirm-modal-divider"></div>
+            <div class="confirm-modal-body" id="confirm-modal-text">Are you sure you want to perform this action?</div>
+            <div class="confirm-modal-actions">
+                <button class="pixel-btn btn-sm btn-secondary" id="confirm-modal-cancel">CANCEL</button>
+                <button class="pixel-btn btn-sm btn-danger" id="confirm-modal-confirm">PROCEED ►</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/config.js"></script>
     <script src="/static/app.js?v=4"></script>
 </body>
+
 
 </html>

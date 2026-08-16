@@ -150,12 +150,13 @@ let lastTypingSent    = 0;
 let isTabFocused      = true;
 
 // Room state
-let currentRoomId   = null;
-let currentRoomName = "";
-let currentRoomAvatar = "🏰";
-let roomListCache   = [];
-let roomPollTimer   = null;
-let isPublicRoom    = true;
+let currentRoomId      = null;
+let currentRoomName    = "";
+let currentRoomAvatar  = "🏰";
+let currentRoomCreator = "";
+let roomListCache      = [];
+let roomPollTimer      = null;
+let isPublicRoom       = true;
 
 // Gamification
 let totalXP      = 0;
@@ -531,14 +532,26 @@ function handleMessage(data) {
                 isJoined = true;
                 // Update room info from server welcome message
                 if (data.room) {
-                    currentRoomId     = data.room.id;
-                    currentRoomName   = data.room.name;
-                    currentRoomAvatar = data.room.avatar || "🏰";
+                    currentRoomId      = data.room.id;
+                    currentRoomName    = data.room.name;
+                    currentRoomAvatar  = data.room.avatar || "🏰";
+                    currentRoomCreator = data.room.created_by || "";
                 }
                 showChatScreen();
                 setCryptoStatusUI(cryptoReady);
             }
             addSystemMessage(data.message, data.timestamp);
+            break;
+
+        case "room_history_cleared":
+            messagesScroll.innerHTML = "";
+            addSystemMessage(`--- CHAT HISTORY CLEARED BY CREATOR (@${data.username}) ---`, data.timestamp);
+            break;
+
+        case "room_deleted":
+            showInAppAlert("ROOM DELETED", `Room #${currentRoomName} was permanently deleted by creator @${data.username}.`, () => {
+                leaveChat();
+            });
             break;
 
         case "join":
@@ -910,9 +923,21 @@ function showChatScreen() {
     if (hdrSprite)   hdrSprite.textContent   = currentRoomAvatar;
     if (badgeCode)   badgeCode.textContent   = currentRoomId || "------";
     if (badgeName)   badgeName.textContent   = currentRoomAvatar + " " + (currentRoomName || "ROOM");
+    updateOwnerActionsVisibility();
     messageInput.focus();
     startSessionTimer();
     playSound("join");
+}
+
+function updateOwnerActionsVisibility() {
+    const ownerWrap = document.getElementById("owner-actions-wrap");
+    if (ownerWrap) {
+        if (currentUsername && currentRoomCreator && currentUsername.toLowerCase() === currentRoomCreator.toLowerCase()) {
+            ownerWrap.classList.remove("hidden");
+        } else {
+            ownerWrap.classList.add("hidden");
+        }
+    }
 }
 
 function scrollToBottom() {
@@ -1500,6 +1525,105 @@ messagesScroll.addEventListener("click", (e) => {
 // ── Leave button ──────────────────────────────────────────────────────────────
 leaveBtn.addEventListener("click", leaveChat);
 
+const clearRoomHistoryBtn = document.getElementById("clear-room-history-btn");
+const deleteRoomBtn       = document.getElementById("delete-room-btn");
+
+if (clearRoomHistoryBtn) {
+    clearRoomHistoryBtn.addEventListener("click", () => {
+        showInAppConfirm({
+            title: "🧹 CLEAR CHAT HISTORY",
+            text: "Are you sure you want to clear all chat history in this room? All stored messages will be wiped for everyone.",
+            confirmText: "YES, CLEAR HISTORY",
+            confirmClass: "btn-warning",
+            onConfirm: () => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "clear_room_history" }));
+                }
+            }
+        });
+    });
+}
+
+if (deleteRoomBtn) {
+    deleteRoomBtn.addEventListener("click", () => {
+        showInAppConfirm({
+            title: "🗑 DELETE CHAT ROOM",
+            text: "Are you sure you want to PERMANENTLY delete this chat room? The room and all messages will be wiped for everyone.",
+            confirmText: "YES, DELETE ROOM",
+            confirmClass: "btn-danger",
+            onConfirm: () => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "delete_room" }));
+                }
+            }
+        });
+    });
+}
+
+// ── In-App Confirmation Modal Helpers ─────────────────────────────────────────
+
+function showInAppConfirm({ title, text, confirmText, confirmClass, onConfirm }) {
+    const overlay     = document.getElementById("confirm-modal-overlay");
+    const titleEl     = document.getElementById("confirm-modal-title");
+    const textEl      = document.getElementById("confirm-modal-text");
+    const cancelBtn   = document.getElementById("confirm-modal-cancel");
+    const confirmBtn  = document.getElementById("confirm-modal-confirm");
+
+    if (!overlay || !titleEl || !textEl || !confirmBtn) return;
+
+    titleEl.textContent = title || "⚠️ CONFIRM ACTION";
+    textEl.textContent  = text || "Are you sure you want to perform this action?";
+    confirmBtn.textContent = confirmText || "PROCEED ►";
+    confirmBtn.className = `pixel-btn btn-sm ${confirmClass || "btn-danger"}`;
+
+    overlay.classList.remove("hidden");
+
+    const cleanup = () => {
+        overlay.classList.add("hidden");
+        cancelBtn.removeEventListener("click", handleCancel);
+        confirmBtn.removeEventListener("click", handleConfirm);
+    };
+
+    const handleCancel = () => {
+        cleanup();
+    };
+
+    const handleConfirm = () => {
+        cleanup();
+        if (onConfirm) onConfirm();
+    };
+
+    cancelBtn.addEventListener("click", handleCancel);
+    confirmBtn.addEventListener("click", handleConfirm);
+}
+
+function showInAppAlert(title, text, onOk) {
+    const overlay     = document.getElementById("confirm-modal-overlay");
+    const titleEl     = document.getElementById("confirm-modal-title");
+    const textEl      = document.getElementById("confirm-modal-text");
+    const cancelBtn   = document.getElementById("confirm-modal-cancel");
+    const confirmBtn  = document.getElementById("confirm-modal-confirm");
+
+    if (!overlay || !titleEl || !textEl || !confirmBtn) return;
+
+    titleEl.textContent = title || "ℹ NOTICE";
+    textEl.textContent  = text || "";
+    confirmBtn.textContent = "OK";
+    confirmBtn.className = "pixel-btn btn-sm btn-warning";
+    cancelBtn.style.display = "none";
+
+    overlay.classList.remove("hidden");
+
+    const handleOk = () => {
+        overlay.classList.add("hidden");
+        cancelBtn.style.display = "";
+        confirmBtn.removeEventListener("click", handleOk);
+        if (onOk) onOk();
+    };
+
+    confirmBtn.addEventListener("click", handleOk);
+}
+
 function leaveChat() {
     if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
     if (roomPollTimer) { clearInterval(roomPollTimer); roomPollTimer = null; }
@@ -1632,8 +1756,9 @@ async function createRoomAction() {
         const res = await fetch(`${HTTP_PROTOCOL}//${BACKEND_HOST}/rooms`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, is_public: isPublicRoom, avatar: selectedRoomAvatar }),
+            body: JSON.stringify({ name, is_public: isPublicRoom, avatar: selectedRoomAvatar, created_by: currentUsername }),
         });
+
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Failed to create room");
         await joinRoom(data.room_id, data.name);

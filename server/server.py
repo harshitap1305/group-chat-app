@@ -250,9 +250,10 @@ class LoginRequest(BaseModel):
     password: str
 
 class CreateRoomRequest(BaseModel):
-    name:      str
-    is_public: bool = True
-    avatar:    str = "🏰"
+    name:       str
+    is_public:  bool = True
+    avatar:     str = "🏰"
+    created_by: str = ""
 
 @app.on_event("startup")
 async def startup():
@@ -372,10 +373,10 @@ async def create_room(req: CreateRoomRequest):
         raise HTTPException(status_code=400, detail="Room name must be 1-40 characters.")
 
     room_id = _generate_room_code()
-    # created_by is anonymous in this endpoint; the join ws message records the actual user
-    db.create_room(room_id, name, created_by="system", is_public=req.is_public, avatar=req.avatar)
-    print(f"[Rooms] Created room '{name}' ({room_id}), public={req.is_public}")
-    return {"room_id": room_id, "name": name, "is_public": req.is_public, "avatar": req.avatar}
+    creator = req.created_by.strip() or "system"
+    db.create_room(room_id, name, created_by=creator, is_public=req.is_public, avatar=req.avatar)
+    print(f"[Rooms] Created room '{name}' ({room_id}), creator='{creator}', public={req.is_public}")
+    return {"room_id": room_id, "name": name, "created_by": creator, "is_public": req.is_public, "avatar": req.avatar}
 
 
 @app.post("/rooms/{room_id}/creator")
@@ -397,6 +398,32 @@ async def get_room(room_id: str):
         raise HTTPException(status_code=404, detail=f"Room '{room_id}' not found.")
     room["online"] = manager.get_room_count(room["id"])
     return room
+
+
+@app.delete("/rooms/{room_id}/history")
+async def delete_room_history(room_id: str, body: dict):
+    username = body.get("username", "").strip()
+    if not username or not db.clear_room_history_by_creator(room_id, username):
+        raise HTTPException(status_code=403, detail="Only the room creator can clear history.")
+    await manager.send_to_all_in_room(room_id, {
+        "type":     "room_history_cleared",
+        "room_id":  room_id,
+        "username": username,
+    })
+    return {"ok": True}
+
+
+@app.delete("/rooms/{room_id}")
+async def delete_chat_room(room_id: str, body: dict):
+    username = body.get("username", "").strip()
+    if not username or not db.delete_room(room_id, username):
+        raise HTTPException(status_code=403, detail="Only the room creator can delete this room.")
+    await manager.send_to_all_in_room(room_id, {
+        "type":     "room_deleted",
+        "room_id":  room_id,
+        "username": username,
+    })
+    return {"ok": True}
 
 
 # ── REST Endpoints ────────────────────────────────────────────────────────────
@@ -524,6 +551,10 @@ async def websocket_endpoint(websocket: WebSocket):
         username = session["username"]
         avatar   = session["avatar"]
 
+        # If room creator is currently 'system' or empty, assign it to the joiner
+        db.update_room_creator_if_system(room_id, username)
+        room = db.get_room(room_id) or room
+
         # ── Cancel any pending cleanup for this room ──────────────────────
         _cancel_room_cleanup(room_id)
 
@@ -536,7 +567,7 @@ async def websocket_endpoint(websocket: WebSocket):
             "type":      "system",
             "message":   f"Welcome to #{room['name']}, {username}!",
             "timestamp": timestamp(),
-            "room":      {"id": room_id, "name": room["name"]},
+            "room":      {"id": room_id, "name": room["name"], "created_by": room["created_by"], "avatar": room.get("avatar", "🏰")},
         })
 
         # Notify others in the room
@@ -665,6 +696,38 @@ async def websocket_endpoint(websocket: WebSocket):
                             "type":    "error",
                             "message": "Could not delete message.",
                         })
+
+            # ── Clear room history (creator only) ──────────────────────
+            elif msg_type == "clear_room_history":
+                success = db.clear_room_history_by_creator(room_id, username)
+                if success:
+                    print(f"[*] History of room '{room_id}' cleared by creator '{username}'")
+                    await manager.send_to_all_in_room(room_id, {
+                        "type":     "room_history_cleared",
+                        "room_id":  room_id,
+                        "username": username,
+                    })
+                else:
+                    await websocket.send_json({
+                        "type":    "error",
+                        "message": "Only the room creator can clear history.",
+                    })
+
+            # ── Delete room (creator only) ─────────────────────────────
+            elif msg_type == "delete_room":
+                success = db.delete_room(room_id, username)
+                if success:
+                    print(f"[!] Room '{room_id}' deleted by creator '{username}'")
+                    await manager.send_to_all_in_room(room_id, {
+                        "type":     "room_deleted",
+                        "room_id":  room_id,
+                        "username": username,
+                    })
+                else:
+                    await websocket.send_json({
+                        "type":    "error",
+                        "message": "Only the room creator can delete this room.",
+                    })
 
             # ── Typing indicator ──────────────────────────────────────
             elif msg_type == "typing":
