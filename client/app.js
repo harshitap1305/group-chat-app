@@ -954,10 +954,35 @@ function showLoginError(message) {
 }
 
 
+function saveSessionState() {
+    if (sessionToken) sessionStorage.setItem("pixel_session_token", sessionToken);
+    if (currentUsername) sessionStorage.setItem("pixel_username", currentUsername);
+    if (selectedAvatar) sessionStorage.setItem("pixel_avatar", selectedAvatar);
+    if (currentRoomId) sessionStorage.setItem("pixel_room_id", currentRoomId);
+    else sessionStorage.removeItem("pixel_room_id");
+    if (currentRoomName) sessionStorage.setItem("pixel_room_name", currentRoomName);
+    else sessionStorage.removeItem("pixel_room_name");
+    if (currentRoomAvatar) sessionStorage.setItem("pixel_room_avatar", currentRoomAvatar);
+    else sessionStorage.removeItem("pixel_room_avatar");
+}
+
+function clearSavedSession() {
+    sessionStorage.removeItem("pixel_session_token");
+    sessionStorage.removeItem("pixel_username");
+    sessionStorage.removeItem("pixel_avatar");
+    sessionStorage.removeItem("pixel_active_screen");
+    sessionStorage.removeItem("pixel_room_id");
+    sessionStorage.removeItem("pixel_room_name");
+    sessionStorage.removeItem("pixel_room_avatar");
+    localStorage.clear();
+}
+
 function showChatScreen() {
     loginScreen.classList.add("hidden");
     lobbyScreen.classList.add("hidden");
     chatScreen.classList.remove("hidden");
+    sessionStorage.setItem("pixel_active_screen", "chat");
+    saveSessionState();
     // Update room info in header and sidebar
     const hdrRoomName  = document.getElementById("hdr-room-name");
     const hdrRoomCode  = document.getElementById("hdr-room-code");
@@ -1461,6 +1486,8 @@ async function authenticate(mode) {
             totalXP = data.xp;
             currentLevel = getCurrentRank().level;
         }
+        sessionStorage.setItem("pixel_active_screen", "lobby");
+        saveSessionState();
 
         btnText.textContent = "LOADING CRYPTO...";
         await initCrypto();
@@ -1903,6 +1930,8 @@ function showLobbyScreen() {
     loginScreen.classList.add("hidden");
     chatScreen.classList.add("hidden");
     lobbyScreen.classList.remove("hidden");
+    sessionStorage.setItem("pixel_active_screen", "lobby");
+    saveSessionState();
     if (lobbyUsernameDisplay) lobbyUsernameDisplay.textContent = `▸ ${currentUsername.toUpperCase()}`;
     // Populate lobby XP chip
     const rank = getCurrentRank();
@@ -2139,6 +2168,7 @@ if (refreshRoomsBtn) {
 if (lobbyLogoutBtn) {
     lobbyLogoutBtn.addEventListener("click", () => {
         if (roomPollTimer) { clearInterval(roomPollTimer); roomPollTimer = null; }
+        clearSavedSession();
         currentUsername = ""; sessionToken = null;
         aesKey = null; ecdsaKeyPair = null; myPublicKeyJwk = null; cryptoReady = false;
         setCryptoStatusUI(false);
@@ -2152,13 +2182,49 @@ if (lobbyLogoutBtn) {
     });
 }
 
+async function tryRestoreSession() {
+    localStorage.clear();
+
+    const savedToken    = sessionStorage.getItem("pixel_session_token");
+    const savedUsername = sessionStorage.getItem("pixel_username");
+    const savedAvatar   = sessionStorage.getItem("pixel_avatar");
+    const activeScreen  = sessionStorage.getItem("pixel_active_screen");
+    const savedRoomId   = sessionStorage.getItem("pixel_room_id");
+    const savedRoomName = sessionStorage.getItem("pixel_room_name");
+
+    if (savedToken && savedUsername) {
+        sessionToken    = savedToken;
+        currentUsername = savedUsername;
+        selectedAvatar  = savedAvatar || "wizard";
+
+        try {
+            await initCrypto();
+            if (activeScreen === "chat" && savedRoomId) {
+                currentRoomId   = savedRoomId;
+                currentRoomName = savedRoomName || "";
+                await joinRoom(savedRoomId, savedRoomName);
+            } else {
+                showLobbyScreen();
+            }
+            return true;
+        } catch (err) {
+            console.warn("[SessionRestore] Could not restore session:", err);
+            clearSavedSession();
+        }
+    }
+    return false;
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function initApp() {
-    regUsername.focus();
     renderAvatarPicker();
     renderRoomAvatarPicker();
     updateXPBar();
     setCryptoStatusUI(false);
+    const restored = await tryRestoreSession();
+    if (!restored) {
+        regUsername.focus();
+    }
 }
 
 async function checkBackendHealth() {
