@@ -260,7 +260,18 @@ async def startup():
     db.init_db()
 
 
+@app.get("/config.js")
+async def config_js():
+    backend_port = int(os.environ.get("BACKEND_PORT", 8000))
+    from fastapi.responses import Response
+    return Response(
+        content=f"window.BACKEND_PORT = {backend_port};",
+        media_type="application/javascript"
+    )
+
+
 # ── Auth Endpoints ────────────────────────────────────────────────────────────
+
 
 @app.post("/register")
 async def register(req: RegisterRequest):

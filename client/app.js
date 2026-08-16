@@ -7,11 +7,18 @@
 // ── Config ────────────────────────────────────────────────────────────────────
 const WS_PROTOCOL   = window.location.protocol === "https:" ? "wss:" : "ws:";
 const HTTP_PROTOCOL = window.location.protocol === "https:" ? "https:" : "http:";
-const BACKEND_PORT  = 5000;  // Mirrors .env BACKEND_PORT
-const BACKEND_HOST  = `${window.location.hostname}:${BACKEND_PORT}`;
+const DYNAMIC_PORT  = window.BACKEND_PORT;
+const CURRENT_PORT  = window.location.port ? parseInt(window.location.port) : (window.location.protocol === "https:" ? 443 : 80);
+
+// Uses dynamic BACKEND_PORT for local dev (distinct ports) or same-origin window.location.host for production/proxy
+const BACKEND_HOST  = (DYNAMIC_PORT && DYNAMIC_PORT !== CURRENT_PORT)
+    ? `${window.location.hostname}:${DYNAMIC_PORT}`
+    : window.location.host;
+
 const SERVER_URL    = `${WS_PROTOCOL}//${BACKEND_HOST}/ws`;
 const UPLOAD_URL    = `${HTTP_PROTOCOL}//${BACKEND_HOST}/upload`;
 const GROUP_KEY_URL = `${HTTP_PROTOCOL}//${BACKEND_HOST}/group-key`;
+
 
 // ── Sounds ────────────────────────────────────────────────────────────────────
 const SOUNDS = {

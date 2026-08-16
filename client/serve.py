@@ -24,9 +24,19 @@ if __name__ == "__main__":
 
     app = FastAPI()
 
+    @app.get("/config.js")
+    async def config_js():
+        backend_port = int(os.environ.get("BACKEND_PORT", 8000))
+        from fastapi.responses import Response
+        return Response(
+            content=f"window.BACKEND_PORT = {backend_port};",
+            media_type="application/javascript"
+        )
+
     @app.get("/")
     async def index():
         return FileResponse(str(CLIENT_DIR / "index.html"))
+
 
     app.mount("/static", StaticFiles(directory=str(CLIENT_DIR)), name="static")
 
