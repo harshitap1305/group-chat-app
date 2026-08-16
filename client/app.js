@@ -942,7 +942,7 @@ function showLoginError(message) {
     // Re-enable auth buttons & restore button text
     if (registerBtn) { registerBtn.disabled = false; if (registerBtnText) registerBtnText.textContent = "► CREATE ACCOUNT"; }
     if (loginBtn)    { loginBtn.disabled = false;    if (loginBtnText)    loginBtnText.textContent    = "► LOGIN"; }
-    if (joinBtn)     { joinBtn.disabled = false;     if (joinBtnText)     joinBtnText.textContent     = "► START QUEST"; }
+    if (typeof joinBtn !== 'undefined' && joinBtn) { joinBtn.disabled = false; if (typeof joinBtnText !== 'undefined' && joinBtnText) joinBtnText.textContent = "► START QUEST"; }
 
     // Auto-revert error message after 5 seconds
     loginErrorTimer = setTimeout(() => {
@@ -2082,10 +2082,51 @@ if (lobbyLogoutBtn) {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-window.addEventListener("load", () => {
+async function initApp() {
     regUsername.focus();
     renderAvatarPicker();
     renderRoomAvatarPicker();
     updateXPBar();
     setCryptoStatusUI(false);
+}
+
+async function checkBackendHealth() {
+    try {
+        const res = await fetch(`${HTTP_PROTOCOL}//${BACKEND_HOST}/health`);
+        if (!res.ok) throw new Error("Health check failed");
+        return true;
+    } catch (e) {
+        // Handle both Chrome ("Failed to fetch") and Firefox ("NetworkError when attempting to fetch resource.")
+        if (e instanceof TypeError || (e.message && e.message.toLowerCase().includes("fetch"))) {
+            const overlay = document.getElementById("cert-overlay");
+            const link = document.getElementById("cert-auth-link");
+            if (overlay && link) {
+                link.href = `${HTTP_PROTOCOL}//${BACKEND_HOST}/health`;
+                overlay.classList.remove("hidden");
+                
+                // Poll automatically so they don't have to refresh
+                const pollTimer = setInterval(async () => {
+                    try {
+                        const check = await fetch(`${HTTP_PROTOCOL}//${BACKEND_HOST}/health`);
+                        if (check.ok) {
+                            clearInterval(pollTimer);
+                            overlay.classList.add("hidden");
+                            initApp();
+                        }
+                    } catch (err) {
+                        // Still blocked, continue polling
+                    }
+                }, 1500);
+            }
+            return false;
+        }
+        return true;
+    }
+}
+
+window.addEventListener("load", async () => {
+    const isHealthy = await checkBackendHealth();
+    if (isHealthy) {
+        initApp();
+    }
 });

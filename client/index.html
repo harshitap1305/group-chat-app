@@ -15,6 +15,26 @@
     <!-- Scanline overlay -->
     <div class="scanlines"></div>
 
+    <!-- Security Certificate Overlay -->
+    <div id="cert-overlay" class="screen hidden" style="z-index: 9999; background: rgba(10, 15, 10, 0.95); display: flex; align-items: center; justify-content: center; text-align: center; padding: 2rem;">
+        <div class="pixel-panel" style="max-width: 600px;">
+            <h2 style="color: #ff5e5e; margin-bottom: 1rem;">⚠️ CONNECTION BLOCKED</h2>
+            <p style="margin-bottom: 2rem; font-family: 'VT323', monospace; font-size: 1.4rem; color: #a1b5a1; line-height: 1.4;">
+                Your browser is blocking the background connection to the backend server because it uses a self-signed security certificate on a different port.
+            </p>
+            <p style="margin-bottom: 2rem; font-family: 'VT323', monospace; font-size: 1.2rem; color: #a1b5a1; text-align: left;">
+                To fix this and join the quest:
+                <ol style="margin-top: 10px; margin-bottom: 10px;">
+                    <li>Click the button below (opens a new tab)</li>
+                    <li>Click <strong>Advanced</strong> &rarr; <strong>Accept the Risk and Continue</strong></li>
+                    <li>Once you see <code>{"status":"ok"}</code>, <strong>close that tab and return here</strong>!</li>
+                </ol>
+            </p>
+            <p style="color: #4CAF50; font-size: 1rem; margin-bottom: 1rem; font-family: 'VT323', monospace;">The app will automatically resume once the connection is authorized. Keep this page open!</p>
+            <a id="cert-auth-link" href="#" target="_blank" class="pixel-btn" style="display: inline-block; margin-bottom: 1rem; text-decoration: none; color: #fff; background: #2f4f2f; padding: 1rem 2rem;">AUTHORIZE SERVER</a>
+        </div>
+    </div>
+
     <!-- ═══════════════════ LOGIN SCREEN ═══════════════════ -->
     <div id="login-screen" class="screen">
 
