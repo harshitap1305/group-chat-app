@@ -331,14 +331,16 @@ async def login(req: LoginRequest):
 
     user = db.get_user(username)
     if not user:
+        print(f"\033[91m[AUTH ERROR] ❌ Login failed: User '@{username}' not found.\033[0m")
         raise HTTPException(status_code=401, detail="Invalid username or password.")
 
     if not bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
+        print(f"\033[91m[AUTH ERROR] ❌ Login failed: Invalid password attempt for user '@{username}'.\033[0m")
         raise HTTPException(status_code=401, detail="Invalid username or password.")
 
     token = secrets.token_hex(32)
     active_sessions[token] = {"username": user["username"], "avatar": user["avatar"]}
-    print(f"[Auth] Login: {user['username']} ({user['avatar']})")
+    print(f"\033[92m[AUTH SUCCESS] 🔑 Password verified for '@{user['username']}' (bcrypt hash match) | Session token issued: {token[:8]}...\033[0m")
     return {"token": token, "avatar": user["avatar"], "xp": user.get("xp", 0)}
 
 
@@ -583,6 +585,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
         manager.add(websocket, username, avatar, room_id)
         db.register_user_key(username, pub_key)
+        print(f"\033[94m[AUTH WS] 🔐 Authenticated WebSocket session token for '@{username}' | Room: '{room_id}' | ECDSA P-256 Public Key Registered.\033[0m")
         print(f"[+] {username} ({avatar}) joined room '{room_id}' | Online in room: {manager.get_room_count(room_id)}")
 
         # Welcome message to joiner
@@ -659,7 +662,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 signed_material = (ciphertext + iv).encode("utf-8")
                 sig_valid = verify_ecdsa_signature(signed_material, signature, sender_key)
 
-                if not sig_valid:
+                if sig_valid:
+                    print(f"\033[92m[AUTH VERIFIED] 🔒 ECDSA-P256 signature VERIFIED for message from '@{username}' in room '{room_id}'.\033[0m")
+                else:
                     print(f"\033[91m[SECURITY ALERT] 🚨 INVALID / TAMPERED SIGNATURE! Sender: '{username}' | Room: '{room_id}' | Signature verification failed!\033[0m")
 
                 # ── Persist to DB ─────────────────────────────────────────
