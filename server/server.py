@@ -279,10 +279,10 @@ async def startup():
 
 @app.get("/config.js")
 async def config_js():
-    backend_port = int(os.environ.get("BACKEND_PORT", 8000))
+    backend_port = int(os.environ.get("PORT", 8000))
     from fastapi.responses import Response
     return Response(
-        content=f"window.BACKEND_PORT = {backend_port};",
+        content=f"window.PORT = {backend_port};",
         media_type="application/javascript"
     )
 
@@ -312,11 +312,12 @@ async def register(req: RegisterRequest):
     try:
         db.create_user(username, pw_hash, avatar)
     except sqlite3.IntegrityError:
+        print(f"\033[91m[REGISTER ERROR] ❌ Registration failed: Username '@{username}' is already taken.\033[0m")
         raise HTTPException(status_code=409, detail=f"Username '{username}' is already taken.")
 
     token = secrets.token_hex(32)
     active_sessions[token] = {"username": username, "avatar": avatar}
-    print(f"[Auth] Registered: {username} ({avatar})")
+    print(f"\033[92m[REGISTER SUCCESS] 🎉 New user '@{username}' registered | Avatar: {avatar} | Password hashed with bcrypt | Session token issued: {token[:8]}...\033[0m")
     return {"token": token, "avatar": avatar, "xp": 0}
 
 
@@ -631,13 +632,21 @@ async def websocket_endpoint(websocket: WebSocket):
         # Send DB-backed history to the new joiner (unlimited history)
         history = db.get_history(room_id=room_id, limit=None, username=username)
         if history:
+            tampered_count = 0
+            valid_count = 0
             for msg in history:
                 if not msg.get("sig_valid", True):
-                    print(f"\033[91m[SECURITY ALERT] ⚠️ Tampered message detected in DB history! Room: '{room_id}' | Sender: '{msg.get('username')}' | Msg ID: '{msg.get('msg_id')}'\033[0m")
+                    tampered_count += 1
+                    print(f"\033[91m[SECURITY ALERT] ⚠️  Tampered message detected in DB history! Room: '{room_id}' | Sender: '{msg.get('username')}' | Msg ID: '{msg.get('msg_id')}'\033[0m")
+                else:
+                    valid_count += 1
+            print(f"\033[96m[PERSISTENCE] 📂 Chat history loaded from SQLite DB for '@{username}' joining room '{room_id}' | Total messages: {len(history)} | ✅ Integrity OK: {valid_count} | 🚨 Tampered: {tampered_count}\033[0m")
             await websocket.send_json({
                 "type":     "history",
                 "messages": history,
             })
+        else:
+            print(f"\033[96m[PERSISTENCE] 📂 No prior history in room '{room_id}' — fresh start for '@{username}'.\033[0m")
 
         # ── Message loop ─────────────────────────────────────────────────
         while True:
@@ -684,6 +693,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         target_user = target_user,
                         attachment  = json.dumps(attachment) if attachment else None,
                     )
+                    print(f"\033[93m[PERSISTENCE] 💾 Message from '@{username}' stored in SQLite DB (AES-GCM encrypted, NOT plaintext) | Room: '{room_id}' | IV: {iv[:12]}... | Sig valid: {sig_valid}\033[0m")
 
                 # ── Build outbound message ─────────────────────────────────
                 msg = {
@@ -919,7 +929,7 @@ async def websocket_endpoint(websocket: WebSocket):
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.environ.get("BACKEND_PORT", 5000))
+    port = int(os.environ.get("PORT", 5000))
 
     print("=" * 50)
     print("  Secure Group Chat Server (Multi-Room)")
