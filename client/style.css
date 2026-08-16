@@ -2288,8 +2288,21 @@ body {
     background: var(--bg0);
     border: 2px solid var(--sage-dk);
     padding: 2px 6px;
-    letter-spacing: 2px;
-    flex-shrink: 0;
+    letter-spacing: 1px;
+}
+
+.room-owner-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-pixel);
+    font-size: 8px;
+    color: #e6b800;
+    background: rgba(230, 184, 0, 0.12);
+    border: 2px solid rgba(230, 184, 0, 0.35);
+    padding: 1px 6px;
+    letter-spacing: 0.5px;
+    box-shadow: 1px 1px 0 var(--bg0);
 }
 
 .room-player-count {

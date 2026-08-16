@@ -196,23 +196,27 @@ def list_rooms() -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, name, created_by, created_at, is_public, avatar
-            FROM rooms
-            WHERE is_public = 1
-            ORDER BY created_at DESC
+            SELECT r.id, r.name, r.created_by, r.created_at, r.is_public, r.avatar,
+                   COALESCE(u.avatar, 'wizard') as owner_avatar
+            FROM rooms r
+            LEFT JOIN users u ON u.username = r.created_by COLLATE NOCASE
+            WHERE r.is_public = 1
+            ORDER BY r.created_at DESC
             """,
         ).fetchall()
     return [
         {
-            "id":         row["id"],
-            "name":       row["name"],
-            "created_by": row["created_by"],
-            "created_at": row["created_at"],
-            "is_public":  bool(row["is_public"]),
-            "avatar":     row["avatar"],
+            "id":           row["id"],
+            "name":         row["name"],
+            "created_by":   row["created_by"],
+            "owner_avatar": row["owner_avatar"],
+            "created_at":   row["created_at"],
+            "is_public":    bool(row["is_public"]),
+            "avatar":       row["avatar"],
         }
         for row in rows
     ]
+
 
 
 # ── Message CRUD ──────────────────────────────────────────────────────────────

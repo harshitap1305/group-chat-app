@@ -1936,12 +1936,19 @@ function renderRoomList(filter = "") {
         const onlineDot = room.online > 0
             ? `<span class="blink-dot-sm"></span> ${room.online} online`
             : `0 online`;
+
+        const ownerUsername = room.created_by || "system";
+        const ownerAvatarData = getAvatarData(room.owner_avatar || "wizard", ownerUsername);
+
         card.innerHTML = `
             <div class="room-card-icon">${icon}</div>
             <div class="room-card-body">
                 <div class="room-card-name">${escapeHtml(room.name)}</div>
                 <div class="room-card-meta">
                     <span class="room-code-badge">${escapeHtml(room.id)}</span>
+                    <span class="room-owner-badge" title="Room Owner: @${escapeHtml(ownerUsername)}">
+                        👑 ${ownerAvatarData.icon} @${escapeHtml(ownerUsername)}
+                    </span>
                     <span class="room-player-count">${onlineDot}</span>
                 </div>
             </div>
