@@ -223,7 +223,7 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 # CORS — allow all for lab purposes
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -363,7 +363,7 @@ async def create_room(req: CreateRoomRequest):
     room_id = _generate_room_code()
     # created_by is anonymous in this endpoint; the join ws message records the actual user
     db.create_room(room_id, name, created_by="system", is_public=req.is_public, avatar=req.avatar)
-    print(f"[Rooms] Created room '{name}' ({room_id}), public={req.is_public}, avatar={req.avatar}")
+    print(f"[Rooms] Created room '{name}' ({room_id}), public={req.is_public}")
     return {"room_id": room_id, "name": name, "is_public": req.is_public, "avatar": req.avatar}
 
 
