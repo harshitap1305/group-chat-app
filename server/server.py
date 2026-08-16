@@ -318,7 +318,7 @@ async def register(req: RegisterRequest):
     token = secrets.token_hex(32)
     active_sessions[token] = {"username": username, "avatar": avatar}
     print(f"\033[92m[REGISTER SUCCESS] 🎉 New user '@{username}' registered | Avatar: {avatar} | Password hashed with bcrypt | Session token issued: {token[:8]}...\033[0m")
-    return {"token": token, "avatar": avatar, "xp": 0}
+    return {"token": token, "username": username, "avatar": avatar, "xp": 0}
 
 
 @app.post("/login")
@@ -342,7 +342,7 @@ async def login(req: LoginRequest):
     token = secrets.token_hex(32)
     active_sessions[token] = {"username": user["username"], "avatar": user["avatar"]}
     print(f"\033[92m[AUTH SUCCESS] 🔑 Password verified for '@{user['username']}' (bcrypt hash match) | Session token issued: {token[:8]}...\033[0m")
-    return {"token": token, "avatar": user["avatar"], "xp": user.get("xp", 0)}
+    return {"token": token, "username": user["username"], "avatar": user["avatar"], "xp": user.get("xp", 0)}
 
 
 class RefreshTokenRequest(BaseModel):
@@ -363,7 +363,7 @@ async def refresh_token(req: RefreshTokenRequest):
     token = secrets.token_hex(32)
     active_sessions[token] = {"username": user["username"], "avatar": user["avatar"]}
     print(f"[Auth] Token refreshed for: {user['username']}")
-    return {"token": token, "avatar": user["avatar"], "xp": user.get("xp", 0)}
+    return {"token": token, "username": user["username"], "avatar": user["avatar"], "xp": user.get("xp", 0)}
 
 
 

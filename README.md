@@ -8,7 +8,8 @@ A **real-time, gamified group chat** built with **FastAPI WebSockets** (Python) 
 
 - ✅ Real-time message broadcasting via WebSockets
 - ✅ User join/leave notifications with sound effects (Mario-inspired)
-- ✅ **User Authentication** — Secure login/signup system with password validation and database persistence
+- ✅ **Database Persistence** — SQLite-backed storage for users, rooms, and encrypted chat messages with HMAC-SHA256 tamper detection
+- ✅ **User Authentication** — Secure login/signup system with password validation (bcrypt) and session tokens
 - ✅ **End-to-End Encryption (E2E)** — Messages, files, media, and voice memos are fully encrypted (Web Crypto API) with signature verification and tamper detection logs
 - ✅ Unique usernames — duplicates are rejected server-side
 - ✅ **Multi-Room Chat** — Create public/private rooms, join via 6-character unique codes, and view active public rooms in the lobby
@@ -24,7 +25,7 @@ A **real-time, gamified group chat** built with **FastAPI WebSockets** (Python) 
 - ✅ **Threaded Replies** — Reply directly to specific messages for clear conversations
 - ✅ **Typing indicator** — shows when another player is typing (with auto-timeout)
 - ✅ **Emoji picker** — quick-react panel with 28 emojis
-- ✅ **Message history** — last 50 messages replayed for new joiners; auto-cleared 60 s after the room empties (with manual clear/delete options for room owners)
+- ✅ **Persistent Message history** — Unlimited chat history loaded from encrypted SQLite database; persists forever unless manually cleared or deleted by the room creator
 - ✅ **Live online sidebar** — sorted player list with avatars, XP stats, and earned badges
 - ✅ Connection status indicator (Online / Offline / Reconnecting)
 - ✅ Auto-reconnect with exponential backoff
@@ -39,7 +40,7 @@ A **real-time, gamified group chat** built with **FastAPI WebSockets** (Python) 
 
 | Layer     | Technology                                        |
 |-----------|---------------------------------------------------|
-| Backend   | Python 3 · FastAPI · Uvicorn · python-multipart   |
+| Backend   | Python 3 · FastAPI · Uvicorn · SQLite3 · cryptography |
 | Frontend  | HTML5 · Vanilla CSS · Vanilla JS (no frameworks)  |
 | Fonts     | Press Start 2P · VT323 (Google Fonts)             |
 | Protocol  | WebSockets (RFC 6455) · REST (`POST /upload`)     |
@@ -119,7 +120,7 @@ python generate_certs.py
 
 Edit `.env` if you need different ports.
 
-### 3. Start the Backend (Terminal 1)
+### 4. Start the Backend (Terminal 1)
 
 ```bash
 cd server
@@ -133,7 +134,7 @@ The server starts on:
 - **Room Management APIs**: `GET /rooms`, `POST /rooms`
 - **Authentication APIs**: `POST /login`, `POST /register`
 
-### 4. Start the Frontend (Terminal 2)
+### 5. Start the Frontend (Terminal 2)
 
 ```bash
 cd client
@@ -142,7 +143,7 @@ python3 serve.py
 
 The frontend is served at `http://0.0.0.0:3000`.
 
-### 5. Open in Browser
+### 6. Open in Browser
 
 ```
 http://localhost:3000
@@ -199,9 +200,9 @@ The client automatically connects to `ws://localhost:5000/ws` using `window.loca
 
 | Mechanic      | Detail                                                   |
 |---------------|----------------------------------------------------------|
-| **XP**        | +2 per message sent · +5 on seeing someone join · +1/min passive |
-| **Streak**    | Increments every message; every 5th streak grants +10 XP |
-| **Ranks**     | Newbie (0) → Squire (50) → Knight (150) → Champion (320) → Warlord (600) → Legend (1000) |
+| **XP**        | +10 per message sent · +2 per message received · +3 when someone joins · +20 for creating a room · +5/min passive |
+| **Streak**    | Increments every message; every 10th message grants +25 XP bonus |
+| **Ranks**     | Newbie (0) → Squire (200) → Knight (600) → Champion (1500) → Warlord (4000) → Legend (10000) |
 | **Badges**    | Earned visual badges displayed in the sidebar alongside ranks |
 | **Level-up**  | Animated toast + 8-bit ascending chime                   |
 | **Stats**     | Messages sent, current streak, session time (all shown in sidebar) |

@@ -1590,7 +1590,7 @@ async function authenticate(mode) {
         }
 
         sessionToken = data.token;
-        currentUsername = username;
+        currentUsername = data.username || username;
         selectedAvatar = data.avatar;
         // Initialize XP from server — persisted across sessions
         if (typeof data.xp === "number") {
@@ -2222,6 +2222,7 @@ async function joinRoom(roomId, roomName) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Token refresh failed");
         sessionToken = data.token;
+        if (data.username) currentUsername = data.username;
         // Sync XP from server on re-join
         if (typeof data.xp === "number") {
             totalXP = data.xp;
