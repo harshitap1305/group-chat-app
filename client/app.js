@@ -129,12 +129,12 @@ function renderRoomAvatarPicker() {
 
 // ── Ranks ─────────────────────────────────────────────────────────────────────
 const RANKS = [
-    { level:1, xp:0,    name:"NEWBIE",   next:50   },
-    { level:2, xp:50,   name:"SQUIRE",   next:150  },
-    { level:3, xp:150,  name:"KNIGHT",   next:320  },
-    { level:4, xp:320,  name:"CHAMPION", next:600  },
-    { level:5, xp:600,  name:"WARLORD",  next:1000 },
-    { level:6, xp:1000, name:"LEGEND",   next:1000 },
+    { level:1, xp:0,     name:"NEWBIE",   next:200   },
+    { level:2, xp:200,   name:"SQUIRE",   next:600   },
+    { level:3, xp:600,   name:"KNIGHT",   next:1500  },
+    { level:4, xp:1500,  name:"CHAMPION", next:4000  },
+    { level:5, xp:4000,  name:"WARLORD",  next:10000 },
+    { level:6, xp:10000, name:"LEGEND",   next:10000 },
 ];
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -559,7 +559,7 @@ function handleMessage(data) {
         case "join":
             addSystemMessage(data.message, data.timestamp, "join");
             playSound("join");
-            gainXP(5);
+            // XP for others joining is now awarded server-side via xp_update
             break;
 
         case "leave":
@@ -600,6 +600,10 @@ function handleMessage(data) {
 
         case "history":
             renderHistory(data.messages);
+            break;
+
+        case "xp_update":
+            handleXpUpdate(data.xp, data.gained, data.reason);
             break;
 
         case "error":
@@ -1068,13 +1072,27 @@ function sendTypingEvent() {
 
 function gainXP(amount) { totalXP += amount; updateXPBar(); checkLevelUp(); }
 
+// Set absolute XP from server (used on login and xp_update)
+function setXP(newTotal) {
+    totalXP = newTotal;
+    currentLevel = getCurrentRank().level;
+    updateXPBar();
+}
+
+function handleXpUpdate(newTotal, gained, reason) {
+    totalXP = newTotal;
+    updateXPBar();
+    checkLevelUp();
+    if (gained > 0) showXpGainToast(gained, reason);
+}
+
 function updateXPBar() {
-    const rank     = getCurrentRank();
+    const rank      = getCurrentRank();
     const xpInLevel = totalXP - rank.xp;
     const xpNeeded  = rank.next - rank.xp;
     const pct       = rank.level === 6 ? 100 : Math.min(100, (xpInLevel / xpNeeded) * 100);
     if (xpBarFill) xpBarFill.style.width = `${pct.toFixed(1)}%`;
-    if (xpValue)   xpValue.textContent   = `${totalXP}/${rank.next}`;
+    if (xpValue)   xpValue.textContent   = `${totalXP} / ${rank.next}`;
     if (rankNameEl) rankNameEl.textContent = rank.name;
 }
 
@@ -1095,16 +1113,38 @@ function checkLevelUp() {
     }
 }
 
-function incrementStreak()      { streakCount++; if (streakEl) streakEl.textContent = streakCount; if (streakCount % 5 === 0) gainXP(10); }
-function incrementMessageCount(){ messagesSent++; if (msgCountEl) msgCountEl.textContent = messagesSent; gainXP(2); incrementStreak(); }
+function incrementStreak()      { streakCount++; if (streakEl) streakEl.textContent = streakCount; }
+function incrementMessageCount(){ messagesSent++; if (msgCountEl) msgCountEl.textContent = messagesSent; incrementStreak(); }
 
 function startSessionTimer() {
     sessionStart = Date.now();
     sessionTimer = setInterval(() => {
         const min = Math.floor((Date.now() - sessionStart) / 60000);
         if (sessionTimeEl) sessionTimeEl.textContent = min >= 60 ? `${Math.floor(min/60)}H${min%60}M` : `${min}M`;
-        gainXP(1);
+        // Send heartbeat — server awards +5 XP/min and sends back xp_update
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "heartbeat" }));
+        }
     }, 60000);
+}
+
+// ── XP Gain Toast ─────────────────────────────────────────────────────────────
+function showXpGainToast(amount, reason) {
+    const container = document.getElementById("xp-toast-container");
+    if (!container) return;
+    const toast = document.createElement("div");
+    toast.className = "xp-gain-toast";
+    const isStreak = reason && (reason.includes("streak") || reason.includes("🔥"));
+    toast.textContent = isStreak ? `+${amount} XP 🔥` : `+${amount} XP`;
+    if (isStreak) toast.classList.add("streak");
+    container.appendChild(toast);
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => { toast.classList.add("show"); });
+    });
+    setTimeout(() => {
+        toast.classList.remove("show");
+        setTimeout(() => toast.remove(), 400);
+    }, 1800);
 }
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
@@ -1418,6 +1458,11 @@ async function authenticate(mode) {
         sessionToken = data.token;
         currentUsername = username;
         selectedAvatar = data.avatar;
+        // Initialize XP from server — persisted across sessions
+        if (typeof data.xp === "number") {
+            totalXP = data.xp;
+            currentLevel = getCurrentRank().level;
+        }
 
         btnText.textContent = "LOADING CRYPTO...";
         await initCrypto();
@@ -1822,14 +1867,13 @@ function leaveChat() {
     if (roomPollTimer) { clearInterval(roomPollTimer); roomPollTimer = null; }
     playSound("leave");
     disconnect();
-    // Reset gamification
-    totalXP = 0; streakCount = 0; messagesSent = 0; currentLevel = 1;
-    if (xpBarFill) xpBarFill.style.width = "0%";
-    if (xpValue)   xpValue.textContent   = "0/50";
-    if (rankNameEl) rankNameEl.textContent = "NEWBIE";
+    // Reset per-session stats — totalXP is NOT reset (it's DB-persisted)
+    streakCount = 0; messagesSent = 0;
+    currentLevel = getCurrentRank().level;
     if (msgCountEl) msgCountEl.textContent = "0";
     if (streakEl)   streakEl.textContent   = "0";
     if (sessionTimeEl) sessionTimeEl.textContent = "0M";
+    updateXPBar(); // redraw bar at persisted XP level
     // Reset room state
     currentRoomId = null; currentRoomName = null; currentRoomAvatar = null;
     // Clear chat UI
@@ -1973,6 +2017,13 @@ async function createRoomAction() {
 
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Failed to create room");
+        // Award room-creation XP if server returned it
+        if (typeof data.xp_total === "number") {
+            const gained = data.xp_awarded || 0;
+            totalXP = data.xp_total;
+            currentLevel = getCurrentRank().level;
+            if (gained > 0) showXpGainToast(gained, "room created");
+        }
         await joinRoom(data.room_id, data.name);
     } catch (err) {
         if (lobbyError) lobbyError.textContent = "! " + err.message.toUpperCase();
@@ -2016,6 +2067,11 @@ async function joinRoom(roomId, roomName) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Token refresh failed");
         sessionToken = data.token;
+        // Sync XP from server on re-join
+        if (typeof data.xp === "number") {
+            totalXP = data.xp;
+            currentLevel = getCurrentRank().level;
+        }
     } catch (err) {
         console.error("[joinRoom] Token refresh failed:", err);
         if (lobbyError) lobbyError.textContent = "! SESSION ERROR — PLEASE LOG IN AGAIN";

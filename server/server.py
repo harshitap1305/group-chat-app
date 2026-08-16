@@ -61,6 +61,14 @@ def _require_env(key: str) -> str:
 AES_GROUP_KEY_HEX: str = _require_env("AES_GROUP_KEY")   # 64 hex chars = 32 bytes
 HMAC_SECRET_HEX: str   = _require_env("HMAC_SECRET")     # 64 hex chars = 32 bytes
 
+# ── XP Award Constants ────────────────────────────────────────────────────────
+_XP_SEND_MESSAGE  = 10   # XP for sending a message
+_XP_RECEIVE_MSG   = 2    # XP for each message received in your room
+_XP_SOMEONE_JOINS = 3    # XP awarded to existing members when someone joins
+_XP_PER_MINUTE    = 5    # XP per minute spent in a room (heartbeat)
+_XP_CREATE_ROOM   = 20   # XP for creating a room
+_XP_STREAK_BONUS  = 25   # XP bonus every 10 messages sent
+
 
 # ── Room Code Generation ───────────────────────────────────────────────────────
 
@@ -309,7 +317,7 @@ async def register(req: RegisterRequest):
     token = secrets.token_hex(32)
     active_sessions[token] = {"username": username, "avatar": avatar}
     print(f"[Auth] Registered: {username} ({avatar})")
-    return {"token": token, "avatar": avatar}
+    return {"token": token, "avatar": avatar, "xp": 0}
 
 
 @app.post("/login")
@@ -331,7 +339,7 @@ async def login(req: LoginRequest):
     token = secrets.token_hex(32)
     active_sessions[token] = {"username": user["username"], "avatar": user["avatar"]}
     print(f"[Auth] Login: {user['username']} ({user['avatar']})")
-    return {"token": token, "avatar": user["avatar"]}
+    return {"token": token, "avatar": user["avatar"], "xp": user.get("xp", 0)}
 
 
 class RefreshTokenRequest(BaseModel):
@@ -352,7 +360,7 @@ async def refresh_token(req: RefreshTokenRequest):
     token = secrets.token_hex(32)
     active_sessions[token] = {"username": user["username"], "avatar": user["avatar"]}
     print(f"[Auth] Token refreshed for: {user['username']}")
-    return {"token": token, "avatar": user["avatar"]}
+    return {"token": token, "avatar": user["avatar"], "xp": user.get("xp", 0)}
 
 
 
@@ -384,7 +392,22 @@ async def create_room(req: CreateRoomRequest):
     creator = req.created_by.strip() or "system"
     db.create_room(room_id, name, created_by=creator, is_public=req.is_public, avatar=req.avatar)
     print(f"[Rooms] Created room '{name}' ({room_id}), creator='{creator}', public={req.is_public}")
-    return {"room_id": room_id, "name": name, "created_by": creator, "is_public": req.is_public, "avatar": req.avatar}
+
+    # Award XP for room creation if creator is a real user
+    xp_total = None
+    if creator and creator != "system":
+        xp_total = db.add_xp(creator, _XP_CREATE_ROOM)
+        print(f"[XP] +{_XP_CREATE_ROOM} XP to {creator} for creating room (total: {xp_total})")
+
+    return {
+        "room_id":    room_id,
+        "name":       name,
+        "created_by": creator,
+        "is_public":  req.is_public,
+        "avatar":     req.avatar,
+        "xp_awarded": _XP_CREATE_ROOM if xp_total is not None else 0,
+        "xp_total":   xp_total,
+    }
 
 
 @app.post("/rooms/{room_id}/creator")
@@ -444,6 +467,13 @@ async def get_group_key():
     In production this endpoint should be protected by authentication.
     """
     return {"key": AES_GROUP_KEY_HEX}
+
+
+@app.get("/users/{username}/xp")
+async def get_user_xp(username: str):
+    """Return the current XP total for a user."""
+    xp = db.get_user_xp(username)
+    return {"username": username, "xp": xp}
 
 
 @app.post("/upload")
@@ -591,6 +621,22 @@ async def websocket_endpoint(websocket: WebSocket):
                 "timestamp": timestamp(),
             }, exclude=websocket)
 
+            # Award XP to all existing room members for someone joining
+            for ws_other, info_other in list(manager.active_connections.items()):
+                if info_other["room_id"] == room_id and info_other["username"].lower() != username.lower():
+                    other_name = info_other["username"]
+                    new_xp = db.add_xp(other_name, _XP_SOMEONE_JOINS)
+                    try:
+                        await ws_other.send_json({
+                            "type":   "xp_update",
+                            "xp":     new_xp,
+                            "gained": _XP_SOMEONE_JOINS,
+                            "reason": f"{username} joined",
+                        })
+                    except Exception:
+                        pass
+                    print(f"[XP] +{_XP_SOMEONE_JOINS} XP to {other_name} (join event, total: {new_xp})")
+
         # Updated user list to everyone in room (deduplicated by username)
         await manager.send_to_all_in_room(room_id, {
             "type":  "userList",
@@ -692,6 +738,51 @@ async def websocket_endpoint(websocket: WebSocket):
                     "status": receipt_status,
                 })
 
+                # ── Award XP to sender for sending a message ──────────────
+                # Track per-user message count in connection info for streak
+                conn_info = manager.active_connections.get(websocket)
+                if conn_info is not None:
+                    conn_info["msg_count"] = conn_info.get("msg_count", 0) + 1
+                    msg_count = conn_info["msg_count"]
+                else:
+                    msg_count = 1
+
+                xp_gained = _XP_SEND_MESSAGE
+                streak_bonus = 0
+                if msg_count % 10 == 0:
+                    streak_bonus = _XP_STREAK_BONUS
+                    xp_gained += streak_bonus
+
+                new_xp = db.add_xp(username, xp_gained)
+                reason = f"+{xp_gained} XP" + (f" (🔥 streak bonus!)" if streak_bonus else "")
+                await websocket.send_json({
+                    "type":   "xp_update",
+                    "xp":     new_xp,
+                    "gained": xp_gained,
+                    "reason": reason,
+                })
+                print(f"[XP] +{xp_gained} XP to {username} for sending (total: {new_xp})")
+
+                # ── Award XP to other room members for receiving ───────────
+                if not target_user:  # only for normal broadcasts, not whispers
+                    seen_recipients = set()
+                    for ws_other, info_other in list(manager.active_connections.items()):
+                        if (info_other["room_id"] == room_id
+                                and info_other["username"].lower() != username.lower()
+                                and info_other["username"].lower() not in seen_recipients):
+                            other_name = info_other["username"]
+                            seen_recipients.add(other_name.lower())
+                            other_xp = db.add_xp(other_name, _XP_RECEIVE_MSG)
+                            try:
+                                await ws_other.send_json({
+                                    "type":   "xp_update",
+                                    "xp":     other_xp,
+                                    "gained": _XP_RECEIVE_MSG,
+                                    "reason": f"message received",
+                                })
+                            except Exception:
+                                pass
+
             # ── Delete / unsend message ───────────────────────────────
             elif msg_type == "delete_message":
                 del_msg_id = data.get("msg_id", "")
@@ -788,6 +879,17 @@ async def websocket_endpoint(websocket: WebSocket):
                     "type":     "typing",
                     "username": username,
                 }, exclude=websocket)
+
+            # ── Heartbeat (time-in-room XP) ───────────────────────────
+            elif msg_type == "heartbeat":
+                new_xp = db.add_xp(username, _XP_PER_MINUTE)
+                await websocket.send_json({
+                    "type":   "xp_update",
+                    "xp":     new_xp,
+                    "gained": _XP_PER_MINUTE,
+                    "reason": "time in room",
+                })
+                print(f"[XP] +{_XP_PER_MINUTE} XP to {username} (heartbeat, total: {new_xp})")
 
     except WebSocketDisconnect:
         pass

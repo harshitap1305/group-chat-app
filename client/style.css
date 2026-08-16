@@ -1444,6 +1444,49 @@ body {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   XP GAIN FLOATING TOASTS
+   ══════════════════════════════════════════════════════════════ */
+
+.xp-toast-container {
+    position: fixed;
+    bottom: 80px;
+    left: 28px;
+    z-index: 9900;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 6px;
+    align-items: flex-start;
+}
+
+.xp-gain-toast {
+    font-family: var(--font-pixel);
+    font-size: 8px;
+    color: var(--sage);
+    background: var(--bg2);
+    border: 3px solid var(--sage-dk);
+    box-shadow: 3px 3px 0 var(--bg0), 0 0 8px rgba(161,188,152,0.25);
+    padding: 5px 10px;
+    letter-spacing: 2px;
+    opacity: 0;
+    transform: translateY(0px);
+    transition:
+        opacity 0.15s steps(3),
+        transform 0.15s steps(3);
+}
+
+.xp-gain-toast.show {
+    opacity: 1;
+    transform: translateY(-12px);
+}
+
+.xp-gain-toast.streak {
+    color: #ffb347;
+    border-color: #d4821a;
+    box-shadow: 3px 3px 0 var(--bg0), 0 0 12px rgba(255,179,71,0.3);
+}
+
+/* ══════════════════════════════════════════════════════════════
    ANIMATIONS
    ══════════════════════════════════════════════════════════════ */
 

@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS users (
     username      TEXT    NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT    NOT NULL,   -- bcrypt hash
     avatar        TEXT    NOT NULL DEFAULT 'wizard',
-    created_at    TEXT    NOT NULL
+    created_at    TEXT    NOT NULL,
+    xp            INTEGER NOT NULL DEFAULT 0   -- persistent XP points
 );
 
 CREATE TABLE IF NOT EXISTS rooms (
@@ -107,6 +108,12 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     if "attachment" not in columns:
         conn.execute("ALTER TABLE messages ADD COLUMN attachment TEXT DEFAULT NULL")
         print("[DB] Migration: added attachment column to messages")
+
+    cursor = conn.execute("PRAGMA table_info(users)")
+    columns = {row[1] for row in cursor.fetchall()}
+    if "xp" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN xp INTEGER NOT NULL DEFAULT 0")
+        print("[DB] Migration: added xp column to users")
 
     cursor = conn.execute("PRAGMA table_info(rooms)")
     columns = {row[1] for row in cursor.fetchall()}
@@ -457,8 +464,8 @@ def create_user(username: str, password_hash: str, avatar: str) -> None:
     with _connect() as conn:
         conn.execute(
             """
-            INSERT INTO users (username, password_hash, avatar, created_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO users (username, password_hash, avatar, created_at, xp)
+            VALUES (?, ?, ?, ?, 0)
             """,
             (username, password_hash, avatar, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
@@ -467,11 +474,11 @@ def create_user(username: str, password_hash: str, avatar: str) -> None:
 def get_user(username: str) -> dict | None:
     """
     Retrieve a user row by username (case-insensitive).
-    Returns { id, username, password_hash, avatar } or None if not found.
+    Returns { id, username, password_hash, avatar, xp } or None if not found.
     """
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, username, password_hash, avatar FROM users WHERE username = ? COLLATE NOCASE",
+            "SELECT id, username, password_hash, avatar, xp FROM users WHERE username = ? COLLATE NOCASE",
             (username,),
         ).fetchone()
     if row is None:
@@ -481,7 +488,35 @@ def get_user(username: str) -> dict | None:
         "username":      row["username"],
         "password_hash": row["password_hash"],
         "avatar":        row["avatar"],
+        "xp":            row["xp"] or 0,
     }
+
+
+def add_xp(username: str, amount: int) -> int:
+    """
+    Atomically add `amount` XP to a user's total.
+    Returns the new XP total.
+    """
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET xp = xp + ? WHERE username = ? COLLATE NOCASE",
+            (amount, username),
+        )
+        row = conn.execute(
+            "SELECT xp FROM users WHERE username = ? COLLATE NOCASE",
+            (username,),
+        ).fetchone()
+    return row["xp"] if row else 0
+
+
+def get_user_xp(username: str) -> int:
+    """Return the current XP total for a user."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT xp FROM users WHERE username = ? COLLATE NOCASE",
+            (username,),
+        ).fetchone()
+    return row["xp"] if row else 0
 
 
 def clear_room_history(room_id: str) -> None:
