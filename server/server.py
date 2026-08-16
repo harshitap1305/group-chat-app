@@ -158,12 +158,14 @@ class ConnectionManager:
         return info["room_id"] if info else None
 
     def get_room_users(self, room_id: str) -> list[dict]:
-        users = [
-            {"username": info["username"], "avatar": info["avatar"]}
-            for info in self.active_connections.values()
-            if info["room_id"] == room_id
-        ]
-        return sorted(users, key=lambda x: x["username"].lower())
+        """Return unique users in a room (deduplicated by username — same user, multiple tabs → one entry)."""
+        seen: dict[str, dict] = {}
+        for info in self.active_connections.values():
+            if info["room_id"] == room_id:
+                key = info["username"].lower()
+                if key not in seen:
+                    seen[key] = {"username": info["username"], "avatar": info["avatar"]}
+        return sorted(seen.values(), key=lambda x: x["username"].lower())
 
     def get_room_count(self, room_id: str) -> int:
         return sum(1 for info in self.active_connections.values() if info["room_id"] == room_id)
@@ -196,15 +198,16 @@ class ConnectionManager:
         return await self.broadcast_to_room(room_id, message, exclude=None)
 
     async def send_to_user_in_room(self, room_id: str, username: str, message: dict) -> int:
-        """Send JSON to a specific user in a room. Returns 1 if delivered, 0 otherwise."""
+        """Send JSON to ALL connections of a specific user in a room (covers multi-tab). Returns delivery count."""
+        delivered = 0
         for ws, info in self.active_connections.items():
             if info["room_id"] == room_id and info["username"].lower() == username.lower():
                 try:
                     await ws.send_json(message)
-                    return 1
+                    delivered += 1
                 except Exception:
-                    return 0
-        return 0
+                    pass
+        return delivered
 
 
 # ── FastAPI App ───────────────────────────────────────────────────────────────
@@ -563,6 +566,9 @@ async def websocket_endpoint(websocket: WebSocket):
         # ── Cancel any pending cleanup for this room ──────────────────────
         _cancel_room_cleanup(room_id)
 
+        # Check if the user is already in this room from another tab
+        already_in_room = manager.is_username_taken_in_room(username, room_id)
+
         manager.add(websocket, username, avatar, room_id)
         db.register_user_key(username, pub_key)
         print(f"[+] {username} ({avatar}) joined room '{room_id}' | Online in room: {manager.get_room_count(room_id)}")
@@ -575,16 +581,17 @@ async def websocket_endpoint(websocket: WebSocket):
             "room":      {"id": room_id, "name": room["name"], "created_by": room["created_by"], "avatar": room.get("avatar", "🏰")},
         })
 
-        # Notify others in the room
-        await manager.broadcast_to_room(room_id, {
-            "type":      "join",
-            "username":  username,
-            "avatar":    avatar,
-            "message":   f"{username} joined the room",
-            "timestamp": timestamp(),
-        }, exclude=websocket)
+        # Only announce join to others if this is the user's FIRST connection in this room
+        if not already_in_room:
+            await manager.broadcast_to_room(room_id, {
+                "type":      "join",
+                "username":  username,
+                "avatar":    avatar,
+                "message":   f"{username} joined the room",
+                "timestamp": timestamp(),
+            }, exclude=websocket)
 
-        # Updated user list to everyone in room
+        # Updated user list to everyone in room (deduplicated by username)
         await manager.send_to_all_in_room(room_id, {
             "type":  "userList",
             "users": manager.get_room_users(room_id),
@@ -796,12 +803,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 _schedule_room_cleanup(room_id)
 
             if room_id:
-                await manager.broadcast_to_room(room_id, {
-                    "type":      "leave",
-                    "username":  username,
-                    "message":   f"{username} left the room",
-                    "timestamp": timestamp(),
-                })
+                # Only broadcast "left the room" if the user has NO remaining connections in this room
+                user_still_connected = manager.is_username_taken_in_room(username, room_id)
+                if not user_still_connected:
+                    await manager.broadcast_to_room(room_id, {
+                        "type":      "leave",
+                        "username":  username,
+                        "message":   f"{username} left the room",
+                        "timestamp": timestamp(),
+                    })
+                # Always send the updated (deduplicated) user list
                 await manager.send_to_all_in_room(room_id, {
                     "type":  "userList",
                     "users": manager.get_room_users(room_id),
