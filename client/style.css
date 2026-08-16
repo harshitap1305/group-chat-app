@@ -110,23 +110,26 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    /* Pattern A: page scrolls, never clips */
+    justify-content: flex-start;
     background:
         /* pixel dot grid */
         radial-gradient(circle, var(--bg3) 1px, transparent 1px),
         var(--bg1);
     background-size: 24px 24px, 100%;
+    background-attachment: local, local;
     position: relative;
-    height: 100vh;
-    height: 100dvh;
-    overflow: hidden;
-    padding: 2vh 16px;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 5vh 16px 6vh;
 }
 
-/* Animated pixel border frame on screen edges */
+/* Animated pixel border frame on screen edges — fixed so it always fills the viewport */
 #login-screen::before {
     content: '';
-    position: absolute;
+    position: fixed;
     inset: 8px;
     border: 4px solid var(--bg3);
     box-shadow:
@@ -136,10 +139,10 @@ body {
     z-index: 0;
 }
 
-/* Corner pixel tiles */
+/* Corner pixel tiles — fixed so they stay in the corner on scroll */
 #login-screen::after {
     content: '■ ■';
-    position: absolute;
+    position: fixed;
     top: 16px;
     left: 16px;
     color: var(--sage-dk);
@@ -149,10 +152,11 @@ body {
 }
 
 .pixel-bg {
-    position: absolute;
+    position: fixed;
     inset: 0;
     overflow: hidden;
     z-index: 0;
+    pointer-events: none;
 }
 
 /* Floating pixel tiles in background */
@@ -191,7 +195,7 @@ body {
     gap: 20px;
     width: 100%;
     max-width: 480px;
-    max-height: 100%;
+    /* No max-height — let content determine height and scroll on the page */
 }
 
 /* ── Title block ─────────────────────────────────────────────── */
@@ -277,8 +281,7 @@ body {
     padding: 24px;
     display: flex;
     flex-direction: column;
-    flex-shrink: 1;
-    min-height: 0;
+    /* Card grows with its content; page scrolls if needed */
     gap: 16px;
 }
 
@@ -294,8 +297,6 @@ body {
 .auth-panel {
     display: flex;
     flex-direction: column;
-    flex-shrink: 1;
-    min-height: 0;
 }
 
 .avatar-picker-grid {
@@ -304,9 +305,7 @@ body {
     gap: 8px;
     margin-top: 4px;
     margin-bottom: 4px;
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
+    /* Show all avatars — no internal scroll needed, page scrolls instead */
     padding: 4px;
 }
 
