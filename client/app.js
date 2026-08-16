@@ -165,6 +165,21 @@ const pendingReceipts = new Map();
 let attachmentData = null;
 let pendingFile    = null;
 
+// Reply state
+let replyToMsgId   = null;
+let replyToUsername = "";
+let replyToText    = "";
+
+// Voice memo state
+let mediaRecorder  = null;
+let audioChunks    = [];
+let isRecording    = false;
+let recordingTimer = null;
+let recordingStart = 0;
+
+// Message cache for reply lookup
+const messageCache = new Map(); // msg_id → { username, text }
+
 function clearPendingAttachment() {
     attachmentData = null;
     pendingFile    = null;
@@ -172,6 +187,14 @@ function clearPendingAttachment() {
     if (attachmentFilename)  attachmentFilename.textContent  = "";
     if (attachmentFilesize)  attachmentFilesize.textContent  = "";
     if (fileInput)           fileInput.value = "";
+}
+
+function clearReply() {
+    replyToMsgId   = null;
+    replyToUsername = "";
+    replyToText    = "";
+    const bar = document.getElementById("reply-preview-bar");
+    if (bar) bar.classList.add("hidden");
 }
 
 // ── Crypto State ──────────────────────────────────────────────────────────────
@@ -438,6 +461,11 @@ const infoBtn          = document.getElementById("info-btn");
 const leaveBtn         = document.getElementById("leave-btn");
 const infoModalOverlay = document.getElementById("info-modal-overlay");
 const infoModalClose   = document.getElementById("info-modal-close");
+const voiceMemoBtn     = document.getElementById("voice-memo-btn");
+const replyPreviewBar  = document.getElementById("reply-preview-bar");
+const replyPreviewUsername = document.getElementById("reply-preview-username");
+const replyPreviewText = document.getElementById("reply-preview-text");
+const replyPreviewClose = document.getElementById("reply-preview-close");
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 
@@ -519,11 +547,17 @@ function handleMessage(data) {
             break;
 
         case "message":
-            if (data.username === currentUsername) break;
+            if (data.username === currentUsername && !data.target_user) break;
+            // For whispers sent by us, we already have optimistic UI
+            if (data.username === currentUsername && data.target_user) break;
             handleIncomingEncryptedMessage(data);
             hideTypingIndicator(data.username);
             playSound("message");
             if (!isTabFocused) playNotificationSound();
+            break;
+
+        case "message_deleted":
+            handleMessageDeleted(data.msg_id, data.username);
             break;
 
         case "receipt":
@@ -567,21 +601,33 @@ function handleMessage(data) {
  * Decrypt and verify an incoming encrypted message, then render it.
  */
 async function handleIncomingEncryptedMessage(data) {
-    const { username, avatar, ciphertext, iv, signature, public_key, timestamp, sig_valid: serverSigValid, tampered, attachment } = data;
+    const { username, avatar, ciphertext, iv, signature, public_key, timestamp,
+            sig_valid: serverSigValid, tampered, attachment,
+            msg_id, reply_to, is_deleted, target_user } = data;
+
+    // Deleted messages render as tombstones
+    if (is_deleted) {
+        addDeletedMessage(username, timestamp, avatar, msg_id);
+        return;
+    }
 
     // Decrypt
     const plaintext = await decryptMessage(ciphertext, iv);
     if (plaintext === null) {
-        // AES-GCM auth tag failed — message is corrupted/tampered
-        addChatMessage(username, "[⚠ DECRYPTION FAILED — MESSAGE TAMPERED]", timestamp, avatar, null, false, true);
+        addChatMessage(username, "[⚠ DECRYPTION FAILED — MESSAGE TAMPERED]", timestamp, avatar,
+            null, false, true, msg_id, null, target_user);
         return;
     }
 
-    // Client-side ECDSA verification (independent check)
+    // Cache for reply lookups
+    if (msg_id) messageCache.set(msg_id, { username, text: plaintext });
+
+    // Client-side ECDSA verification
     const material  = ciphertext + iv;
     const sigValid  = public_key ? await verifySignature(material, signature, public_key) : false;
 
-    addChatMessage(username, plaintext, timestamp, avatar, attachment, sigValid, tampered === true);
+    addChatMessage(username, plaintext, timestamp, avatar, attachment, sigValid,
+        tampered === true, msg_id, reply_to, target_user);
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -599,15 +645,45 @@ function addSystemMessage(text, time, subtype = "") {
 }
 
 /**
+ * Parse @mentions in text: wraps @username in <span class="mention-tag">
+ * Returns { html, mentionsMe } where mentionsMe is true if @currentUsername found.
+ */
+function parseMentions(escapedText) {
+    let mentionsMe = false;
+    const html = escapedText.replace(/@(\w+)/g, (match, name) => {
+        if (name.toLowerCase() === currentUsername.toLowerCase()) mentionsMe = true;
+        return `<span class="mention-tag">${match}</span>`;
+    });
+    return { html, mentionsMe };
+}
+
+/**
  * Render a chat message bubble.
  * sigValid   — true = ECDSA verified, false = invalid/unknown
  * tampered   — true = server flagged HMAC mismatch (DB was modified)
  */
-function addChatMessage(username, text, time, avatarId = "wizard", attachment = null, sigValid = true, tampered = false) {
+function addChatMessage(username, text, time, avatarId = "wizard", attachment = null,
+                        sigValid = true, tampered = false, msgId = null, replyTo = null, targetUser = null) {
     const isOwn      = username === currentUsername;
     const avatarData = getAvatarData(avatarId, username);
     const el         = document.createElement("div");
-    el.className     = `message ${isOwn ? "own" : "other"}`;
+
+    // Build class list
+    let classes = `message ${isOwn ? "own" : "other"}`;
+    if (targetUser) classes += " whisper";
+
+    // Parse mentions
+    let textHtml = "";
+    let mentionsMe = false;
+    if (text) {
+        const parsed = parseMentions(escapeHtml(text));
+        textHtml = parsed.html;
+        mentionsMe = parsed.mentionsMe;
+    }
+    if (mentionsMe && !isOwn) classes += " mention-highlight";
+
+    el.className = classes;
+    if (msgId) el.dataset.msgId = msgId;
 
     const avatarHtml = `
         <div class="chat-msg-avatar" style="background:${avatarData.bg}; border-color:${avatarData.border}" title="${escapeHtml(avatarData.name)}">
@@ -624,44 +700,117 @@ function addChatMessage(username, text, time, avatarId = "wizard", attachment = 
         securityBadge = `<span class="sec-badge invalid" title="Signature invalid or missing">⚠ SIG?</span>`;
     }
 
+    // Whisper label
+    let whisperHtml = "";
+    if (targetUser) {
+        const label = isOwn ? `WHISPER TO @${escapeHtml(targetUser).toUpperCase()}` : `WHISPER FROM @${escapeHtml(username).toUpperCase()}`;
+        whisperHtml = `<div class="whisper-label">🔮 ${label}</div>`;
+    }
+
+    // Reply context (show parent message preview)
+    let replyContextHtml = "";
+    if (replyTo) {
+        const parent = messageCache.get(replyTo);
+        const parentUser = parent ? parent.username : "...";
+        const parentText = parent ? parent.text.substring(0, 80) : "...";
+        replyContextHtml = `
+            <div class="reply-context" data-reply-to="${escapeHtml(replyTo)}" title="Click to scroll to original">
+                <span class="reply-context-user">↳ ${escapeHtml(parentUser)}</span>
+                <span class="reply-context-text">${escapeHtml(parentText)}</span>
+            </div>`;
+    }
+
     let attachmentHtml = buildAttachmentHtml(attachment);
+
+    // Message action buttons (reply for everyone, delete for own)
+    let actionsHtml = `
+        <div class="msg-actions">
+            <button class="msg-action-btn reply-btn" title="Reply" data-msg-id="${escapeHtml(msgId || '')}" data-msg-user="${escapeHtml(username)}" data-msg-text="${escapeHtml(text || '')}">↩</button>
+            ${isOwn ? `<button class="msg-action-btn delete-btn" title="Delete" data-msg-id="${escapeHtml(msgId || '')}">🗑</button>` : ""}
+        </div>`;
 
     el.innerHTML = `
         ${!isOwn ? avatarHtml : ""}
         <div class="message-bubble ${tampered ? "tampered-bubble" : ""}">
+            ${actionsHtml}
+            ${whisperHtml}
+            ${replyContextHtml}
             <div class="message-meta">
                 <span class="message-username">${escapeHtml(username)}</span>
                 ${time ? `<span class="message-time">${escapeHtml(time)}</span>` : ""}
                 ${securityBadge}
             </div>
-            ${text ? `<p class="message-text">${escapeHtml(text)}</p>` : ""}
+            ${text ? `<p class="message-text">${textHtml}</p>` : ""}
             ${attachmentHtml}
         </div>
         ${isOwn ? avatarHtml : ""}
     `;
     messagesScroll.appendChild(el);
     scrollToBottom();
+
+    // Play mention ping
+    if (mentionsMe && !isOwn) playMentionSound();
 }
 
-function addOwnMessageOptimistic(text, msgId, attachment = null) {
+function addOwnMessageOptimistic(text, msgId, attachment = null, replyTo = null, targetUser = null) {
     const avatarData = getAvatarData(selectedAvatar, currentUsername);
     const el = document.createElement("div");
-    el.className = "message own";
+
+    let classes = "message own";
+    if (targetUser) classes += " whisper";
+    el.className = classes;
+    if (msgId) el.dataset.msgId = msgId;
 
     const avatarHtml = `
         <div class="chat-msg-avatar" style="background:${avatarData.bg}; border-color:${avatarData.border}" title="${escapeHtml(avatarData.name)}">
             <span>${avatarData.icon}</span>
         </div>`;
 
+    // Whisper label
+    let whisperHtml = "";
+    if (targetUser) {
+        whisperHtml = `<div class="whisper-label">🔮 WHISPER TO @${escapeHtml(targetUser).toUpperCase()}</div>`;
+    }
+
+    // Reply context
+    let replyContextHtml = "";
+    if (replyTo) {
+        const parent = messageCache.get(replyTo);
+        const parentUser = parent ? parent.username : "...";
+        const parentText = parent ? parent.text.substring(0, 80) : "...";
+        replyContextHtml = `
+            <div class="reply-context" data-reply-to="${escapeHtml(replyTo)}">
+                <span class="reply-context-user">↳ ${escapeHtml(parentUser)}</span>
+                <span class="reply-context-text">${escapeHtml(parentText)}</span>
+            </div>`;
+    }
+
+    // Parse mentions in own message
+    let textHtml = "";
+    if (text) {
+        const parsed = parseMentions(escapeHtml(text));
+        textHtml = parsed.html;
+    }
+
+    // Action buttons for own message
+    let actionsHtml = `
+        <div class="msg-actions">
+            <button class="msg-action-btn reply-btn" title="Reply" data-msg-id="${escapeHtml(msgId || '')}" data-msg-user="${escapeHtml(currentUsername)}" data-msg-text="${escapeHtml(text || '')}">↩</button>
+            <button class="msg-action-btn delete-btn" title="Delete" data-msg-id="${escapeHtml(msgId || '')}">🗑</button>
+        </div>`;
+
     const receiptId = `receipt-${msgId}`;
     el.innerHTML = `
         <div class="message-bubble">
+            ${actionsHtml}
+            ${whisperHtml}
+            ${replyContextHtml}
             <div class="message-meta">
                 <span class="message-username">${escapeHtml(currentUsername)}</span>
                 <span class="message-time">${currentTime()}</span>
                 <span class="sec-badge verified" title="Sent encrypted & signed">🔒 ✓</span>
             </div>
-            ${text ? `<p class="message-text">${escapeHtml(text)}</p>` : ""}
+            ${text ? `<p class="message-text">${textHtml}</p>` : ""}
             ${buildAttachmentHtml(attachment)}
             <span class="receipt-icon" id="${receiptId}" title="Sent">😴</span>
         </div>
@@ -773,19 +922,28 @@ async function renderHistory(messages) {
 
     for (const msg of messages) {
         if (msg.type === "message") {
+            // Deleted messages render as tombstones
+            if (msg.is_deleted) {
+                addDeletedMessage(msg.username, msg.timestamp, msg.avatar, msg.msg_id);
+                continue;
+            }
             // Decrypt history messages
             const plaintext = await decryptMessage(msg.ciphertext, msg.iv);
             if (plaintext === null) {
                 addChatMessage(msg.username, "[⚠ DECRYPTION FAILED — MESSAGE TAMPERED]",
-                    msg.timestamp, msg.avatar, null, false, true);
+                    msg.timestamp, msg.avatar, null, false, true, msg.msg_id, null, msg.target_user);
                 continue;
             }
+            // Cache for reply lookups
+            if (msg.msg_id) messageCache.set(msg.msg_id, { username: msg.username, text: plaintext });
+
             const material = msg.ciphertext + msg.iv;
             const sigValid  = msg.public_key
                 ? await verifySignature(material, msg.signature, msg.public_key)
                 : false;
             addChatMessage(msg.username, plaintext, msg.timestamp, msg.avatar,
-                msg.attachment, sigValid, msg.tampered === true);
+                msg.attachment, sigValid, msg.tampered === true,
+                msg.msg_id, msg.reply_to, msg.target_user);
         }
     }
 
@@ -899,13 +1057,24 @@ function getFileIcon(fileType, fileName) {
 // ── Send Message (encrypt + sign) ────────────────────────────────────────────
 
 async function sendMessage() {
-    const text         = messageInput.value.trim();
+    let text         = messageInput.value.trim();
     const hasAttachment = attachmentData !== null;
     if (!text && !hasAttachment) return;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     if (!cryptoReady) { console.error("[Send] Crypto not ready"); return; }
 
-    const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const msgId = crypto.randomUUID ? crypto.randomUUID() : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+    // Parse whisper command: /w @username message
+    let targetUser = null;
+    const whisperMatch = text.match(/^\/w\s+@(\w+)\s+(.+)$/is);
+    if (whisperMatch) {
+        targetUser = whisperMatch[1];
+        text       = whisperMatch[2];
+    }
+
+    // Cache own message for reply lookups
+    messageCache.set(msgId, { username: currentUsername, text });
 
     // 1. Encrypt
     const { ciphertext, iv } = await encryptMessage(text);
@@ -923,13 +1092,16 @@ async function sendMessage() {
         public_key:   myPublicKeyJwk,
         client_msg_id: msgId,
         attachment:   attachmentData || null,
+        reply_to:    replyToMsgId || null,
+        target_user: targetUser,
     }));
 
     playSound("message");
     const attachmentSnapshot = attachmentData;
-    addOwnMessageOptimistic(text, msgId, attachmentSnapshot);
+    addOwnMessageOptimistic(text, msgId, attachmentSnapshot, replyToMsgId, targetUser);
     messageInput.value = "";
     clearPendingAttachment();
+    clearReply();
     messageInput.focus();
     emojiPicker.classList.remove("open");
     emojiToggleBtn.classList.remove("active");
@@ -964,6 +1136,156 @@ function playLevelUpSound() {
             osc.start(t); osc.stop(t + 0.12);
         });
     } catch (e) {}
+}
+
+function playMentionSound() {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        [660, 880, 1100].forEach((freq, i) => {
+            const osc = ctx.createOscillator(), gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.type = "square"; osc.frequency.value = freq;
+            const t = ctx.currentTime + i * 0.08;
+            gain.gain.setValueAtTime(0.08, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+            osc.start(t); osc.stop(t + 0.1);
+        });
+    } catch (e) {}
+}
+
+// ── Delete / Unsend ───────────────────────────────────────────────────────────
+
+function handleMessageDeleted(msgId, deletedBy) {
+    // Find the message DOM element
+    const el = messagesScroll.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
+    if (el) {
+        el.className = el.className.replace(/(own|other|whisper|mention-highlight)/g, '').trim() + " message deleted";
+        const bubble = el.querySelector(".message-bubble");
+        if (bubble) {
+            bubble.innerHTML = `
+                <div class="deleted-tombstone">
+                    <span class="deleted-tombstone-icon">🚫</span>
+                    <span>This message was deleted</span>
+                </div>`;
+        }
+    }
+}
+
+function addDeletedMessage(username, time, avatarId, msgId) {
+    const isOwn = username === currentUsername;
+    const avatarData = getAvatarData(avatarId, username);
+    const el = document.createElement("div");
+    el.className = `message ${isOwn ? "own" : "other"} deleted`;
+    if (msgId) el.dataset.msgId = msgId;
+
+    const avatarHtml = `
+        <div class="chat-msg-avatar" style="background:${avatarData.bg}; border-color:${avatarData.border}" title="${escapeHtml(avatarData.name)}">
+            <span>${avatarData.icon}</span>
+        </div>`;
+
+    el.innerHTML = `
+        ${!isOwn ? avatarHtml : ""}
+        <div class="message-bubble">
+            <div class="message-meta">
+                <span class="message-username">${escapeHtml(username)}</span>
+                ${time ? `<span class="message-time">${escapeHtml(time)}</span>` : ""}
+            </div>
+            <div class="deleted-tombstone">
+                <span class="deleted-tombstone-icon">🚫</span>
+                <span>This message was deleted</span>
+            </div>
+        </div>
+        ${isOwn ? avatarHtml : ""}
+    `;
+    messagesScroll.appendChild(el);
+    scrollToBottom();
+}
+
+// ── Reply system ──────────────────────────────────────────────────────────────
+
+function setReply(msgId, username, text) {
+    replyToMsgId   = msgId;
+    replyToUsername = username;
+    replyToText    = text;
+    if (replyPreviewUsername) replyPreviewUsername.textContent = username.toUpperCase();
+    if (replyPreviewText)     replyPreviewText.textContent = text.substring(0, 100);
+    if (replyPreviewBar)      replyPreviewBar.classList.remove("hidden");
+    messageInput.focus();
+}
+
+// ── Voice Memo ────────────────────────────────────────────────────────────────
+
+async function startVoiceRecording() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(stream, { mimeType: getMimeType() });
+
+        mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) audioChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+            stream.getTracks().forEach(t => t.stop());
+            clearInterval(recordingTimer);
+            isRecording = false;
+            voiceMemoBtn.classList.remove("recording");
+            voiceMemoBtn.textContent = "🎤";
+
+            if (audioChunks.length === 0) return;
+
+            const ext = mediaRecorder.mimeType.includes("webm") ? "webm" : "ogg";
+            const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+            const file = new File([blob], `voice-memo.${ext}`, { type: mediaRecorder.mimeType });
+
+            // Upload via existing /upload endpoint
+            const formData = new FormData();
+            formData.append("file", file);
+            try {
+                const res = await fetch(UPLOAD_URL, { method: "POST", body: formData });
+                if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+                const uploadData = await res.json();
+                if (uploadData.url && uploadData.url.startsWith("/")) {
+                    uploadData.url = `${HTTP_PROTOCOL}//${BACKEND_HOST}${uploadData.url}`;
+                }
+                // Send as attachment-only message
+                attachmentData = uploadData;
+                await sendMessage();
+            } catch (err) {
+                console.error("[VoiceMemo] Upload failed:", err);
+            }
+        };
+
+        mediaRecorder.start();
+        isRecording = true;
+        recordingStart = Date.now();
+        voiceMemoBtn.classList.add("recording");
+        voiceMemoBtn.textContent = "⏹";
+
+        // Auto-stop after 60 seconds
+        recordingTimer = setTimeout(() => {
+            if (isRecording && mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+            }
+        }, 60000);
+
+    } catch (err) {
+        console.error("[VoiceMemo] Microphone access denied:", err);
+        alert("Microphone access is required for voice memos.");
+    }
+}
+
+function stopVoiceRecording() {
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+    }
+}
+
+function getMimeType() {
+    if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) return "audio/webm;codecs=opus";
+    if (MediaRecorder.isTypeSupported("audio/webm")) return "audio/webm";
+    if (MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")) return "audio/ogg;codecs=opus";
+    return "audio/webm";
 }
 
 // ── Event Listeners ───────────────────────────────────────────────────────────
@@ -1107,7 +1429,65 @@ infoModalOverlay.addEventListener("click", (e) => {
     if (e.target === infoModalOverlay) infoModalOverlay.classList.add("hidden");
 });
 document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") infoModalOverlay.classList.add("hidden");
+    if (e.key === "Escape") {
+        infoModalOverlay.classList.add("hidden");
+        clearReply();
+    }
+});
+
+// ── Voice memo button ─────────────────────────────────────────────────────────
+if (voiceMemoBtn) {
+    voiceMemoBtn.addEventListener("click", () => {
+        if (isRecording) {
+            stopVoiceRecording();
+        } else {
+            startVoiceRecording();
+        }
+    });
+}
+
+// ── Reply preview close ───────────────────────────────────────────────────────
+if (replyPreviewClose) {
+    replyPreviewClose.addEventListener("click", clearReply);
+}
+
+// ── Message action delegation (Reply & Delete) ───────────────────────────────
+messagesScroll.addEventListener("click", (e) => {
+    // Reply button
+    const replyBtn = e.target.closest(".reply-btn");
+    if (replyBtn) {
+        const msgId = replyBtn.dataset.msgId;
+        const user  = replyBtn.dataset.msgUser;
+        const text  = replyBtn.dataset.msgText;
+        if (msgId) setReply(msgId, user, text);
+        return;
+    }
+
+    // Delete button
+    const deleteBtn = e.target.closest(".delete-btn");
+    if (deleteBtn) {
+        const msgId = deleteBtn.dataset.msgId;
+        if (msgId && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "delete_message", msg_id: msgId }));
+            // Optimistic delete on sender side
+            handleMessageDeleted(msgId, currentUsername);
+        }
+        return;
+    }
+
+    // Reply context click (scroll to original)
+    const replyCtx = e.target.closest(".reply-context");
+    if (replyCtx) {
+        const parentId = replyCtx.dataset.replyTo;
+        if (parentId) {
+            const parentEl = messagesScroll.querySelector(`[data-msg-id="${CSS.escape(parentId)}"]`);
+            if (parentEl) {
+                parentEl.scrollIntoView({ behavior: "smooth", block: "center" });
+                parentEl.style.outline = "2px solid var(--sage)";
+                setTimeout(() => { parentEl.style.outline = ""; }, 2000);
+            }
+        }
+    }
 });
 
 // ── Leave button ──────────────────────────────────────────────────────────────

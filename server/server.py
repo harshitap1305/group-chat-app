@@ -195,6 +195,17 @@ class ConnectionManager:
     async def send_to_all_in_room(self, room_id: str, message: dict) -> int:
         return await self.broadcast_to_room(room_id, message, exclude=None)
 
+    async def send_to_user_in_room(self, room_id: str, username: str, message: dict) -> int:
+        """Send JSON to a specific user in a room. Returns 1 if delivered, 0 otherwise."""
+        for ws, info in self.active_connections.items():
+            if info["room_id"] == room_id and info["username"].lower() == username.lower():
+                try:
+                    await ws.send_json(message)
+                    return 1
+                except Exception:
+                    return 0
+        return 0
+
 
 # ── FastAPI App ───────────────────────────────────────────────────────────────
 
@@ -533,7 +544,7 @@ async def websocket_endpoint(websocket: WebSocket):
         })
 
         # Send DB-backed history to the new joiner
-        history = db.get_history(room_id=room_id, limit=50)
+        history = db.get_history(room_id=room_id, limit=50, username=username)
         if history:
             await websocket.send_json({
                 "type":     "history",
@@ -553,6 +564,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 sender_key    = data.get("public_key") or db.get_user_key(username) or {}
                 client_msg_id = data.get("client_msg_id", "")
                 attachment    = data.get("attachment")
+                reply_to      = data.get("reply_to")      # msg_id of parent (threaded reply)
+                target_user   = data.get("target_user")    # username for whispers
 
                 if not ciphertext or not iv or not signature:
                     continue
@@ -567,20 +580,24 @@ async def websocket_endpoint(websocket: WebSocket):
                 # ── Persist to DB ─────────────────────────────────────────
                 if ciphertext:
                     db.save_message(
-                        room_id    = room_id,
-                        username   = username,
-                        avatar     = avatar,
-                        ciphertext = ciphertext,
-                        iv         = iv,
-                        signature  = signature,
-                        public_key = sender_key,
-                        timestamp  = timestamp(),
-                        sig_valid  = sig_valid,
+                        room_id     = room_id,
+                        username    = username,
+                        avatar      = avatar,
+                        ciphertext  = ciphertext,
+                        iv          = iv,
+                        signature   = signature,
+                        public_key  = sender_key,
+                        timestamp   = timestamp(),
+                        sig_valid   = sig_valid,
+                        msg_id      = client_msg_id,
+                        reply_to    = reply_to,
+                        target_user = target_user,
                     )
 
-                # ── Broadcast encrypted message to room ───────────────────
+                # ── Build outbound message ─────────────────────────────────
                 msg = {
                     "type":       "message",
+                    "msg_id":     client_msg_id,
                     "username":   username,
                     "avatar":     avatar,
                     "ciphertext": ciphertext,
@@ -590,19 +607,29 @@ async def websocket_endpoint(websocket: WebSocket):
                     "timestamp":  timestamp(),
                     "sig_valid":  sig_valid,
                     "attachment": attachment,
+                    "reply_to":   reply_to,
+                    "target_user": target_user,
                 }
-                delivered = await manager.send_to_all_in_room(room_id, msg)
 
-                # ── Delivery receipt ──────────────────────────────────────
-                room_size      = manager.get_room_count(room_id)
-                others_reached = delivered - 1
-                total_others   = room_size - 1
-                if total_others <= 0:
-                    receipt_status = "sent"
-                elif others_reached >= total_others:
-                    receipt_status = "delivered_all"
+                # ── Whisper routing vs broadcast ──────────────────────────
+                if target_user:
+                    # Whisper: send only to target user (not to sender — they already have optimistic UI)
+                    delivered = await manager.send_to_user_in_room(room_id, target_user, msg)
+                    receipt_status = "delivered_all" if delivered > 0 else "sent"
                 else:
-                    receipt_status = "partial"
+                    # Normal broadcast to entire room
+                    delivered = await manager.send_to_all_in_room(room_id, msg)
+
+                    # ── Delivery receipt ──────────────────────────────────
+                    room_size      = manager.get_room_count(room_id)
+                    others_reached = delivered - 1
+                    total_others   = room_size - 1
+                    if total_others <= 0:
+                        receipt_status = "sent"
+                    elif others_reached >= total_others:
+                        receipt_status = "delivered_all"
+                    else:
+                        receipt_status = "partial"
 
                 await websocket.send_json({
                     "type":   "receipt",
@@ -610,7 +637,25 @@ async def websocket_endpoint(websocket: WebSocket):
                     "status": receipt_status,
                 })
 
-            # ── Typing indicator ──────────────────────────────────────────
+            # ── Delete / unsend message ───────────────────────────────
+            elif msg_type == "delete_message":
+                del_msg_id = data.get("msg_id", "")
+                if del_msg_id:
+                    success = db.delete_message(del_msg_id, username)
+                    if success:
+                        # Broadcast tombstone to entire room
+                        await manager.send_to_all_in_room(room_id, {
+                            "type":     "message_deleted",
+                            "msg_id":   del_msg_id,
+                            "username": username,
+                        })
+                    else:
+                        await websocket.send_json({
+                            "type":    "error",
+                            "message": "Could not delete message.",
+                        })
+
+            # ── Typing indicator ──────────────────────────────────────
             elif msg_type == "typing":
                 await manager.broadcast_to_room(room_id, {
                     "type":     "typing",

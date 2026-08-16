@@ -2414,3 +2414,286 @@ body {
     color: var(--cream);
     box-shadow: 0 0 8px rgba(161,188,152,0.3);
 }
+
+/* ══════════════════════════════════════════════════════════════
+   VOICE MEMO BUTTON
+   ══════════════════════════════════════════════════════════════ */
+
+.voice-memo-btn {
+    background: var(--bg3);
+    border: 3px solid var(--sage-dk);
+    color: var(--sage);
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    cursor: pointer;
+    box-shadow: 2px 2px 0 var(--bg0);
+    transition: transform 0.1s ease, background 0.1s ease;
+    flex-shrink: 0;
+}
+
+.voice-memo-btn:hover {
+    background: var(--sage-dk);
+    color: var(--bg0);
+    transform: translateY(-2px);
+}
+
+.voice-memo-btn.recording {
+    background: #5c2a2a;
+    border-color: #b85c5c;
+    color: #ff6b6b;
+    animation: voicePulse 1s steps(2) infinite;
+    box-shadow: 0 0 12px rgba(255,107,107,0.4);
+}
+
+@keyframes voicePulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.7; transform: scale(1.05); }
+}
+
+.voice-memo-timer {
+    font-family: var(--font-pixel);
+    font-size: 8px;
+    color: #ff6b6b;
+    letter-spacing: 1px;
+    margin-left: 6px;
+    animation: blink 1s steps(1) infinite;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   REPLY PREVIEW BAR (above input when replying)
+   ══════════════════════════════════════════════════════════════ */
+
+.reply-preview-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg1);
+    border: 3px solid var(--sage-dk);
+    border-left: 5px solid var(--sage);
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    font-family: var(--font-readable);
+    font-size: 15px;
+    color: var(--t-ivory);
+    animation: msgAppear 0.1s steps(2);
+}
+
+.reply-preview-bar.hidden {
+    display: none;
+}
+
+.reply-preview-icon {
+    font-size: 16px;
+    color: var(--sage);
+    flex-shrink: 0;
+}
+
+.reply-preview-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow: hidden;
+}
+
+.reply-preview-username {
+    font-size: 13px;
+    color: var(--sage);
+    letter-spacing: 1px;
+    font-weight: bold;
+}
+
+.reply-preview-text {
+    font-size: 15px;
+    color: var(--t-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.reply-preview-close {
+    background: transparent;
+    border: 2px solid var(--bg5);
+    color: var(--t-muted);
+    width: 22px;
+    height: 22px;
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.1s;
+}
+
+.reply-preview-close:hover {
+    background: var(--crimson-dk);
+    border-color: var(--crimson);
+    color: var(--cream);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   MESSAGE ACTION BUTTONS (Reply / Delete on hover)
+   ══════════════════════════════════════════════════════════════ */
+
+.msg-actions {
+    display: none;
+    position: absolute;
+    top: -6px;
+    gap: 4px;
+    z-index: 10;
+}
+
+.message.own .msg-actions { left: 8px; }
+.message.other .msg-actions { right: 8px; }
+
+.message-bubble:hover .msg-actions {
+    display: flex;
+}
+
+.msg-action-btn {
+    background: var(--bg2);
+    border: 2px solid var(--bg5);
+    color: var(--t-muted);
+    width: 26px;
+    height: 26px;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.1s;
+    box-shadow: 2px 2px 0 var(--bg0);
+}
+
+.msg-action-btn:hover {
+    background: var(--bg4);
+    border-color: var(--sage);
+    color: var(--cream);
+    transform: translateY(-1px);
+    box-shadow: 3px 3px 0 var(--bg0);
+}
+
+.msg-action-btn.delete-btn:hover {
+    border-color: #b85c5c;
+    color: #ff6b6b;
+    background: #3a1f1f;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   THREADED REPLY — Parent message preview inside bubble
+   ══════════════════════════════════════════════════════════════ */
+
+.reply-context {
+    background: var(--bg1);
+    border-left: 4px solid var(--sage-dk);
+    padding: 6px 10px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: background 0.1s;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.reply-context:hover {
+    background: var(--bg2);
+    border-color: var(--sage);
+}
+
+.reply-context-user {
+    font-family: var(--font-readable);
+    font-size: 14px;
+    color: var(--sage);
+    letter-spacing: 1px;
+}
+
+.reply-context-text {
+    font-family: var(--font-readable);
+    font-size: 15px;
+    color: var(--t-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   WHISPER MESSAGES
+   ══════════════════════════════════════════════════════════════ */
+
+.message.whisper .message-bubble {
+    border-style: dashed !important;
+    background: rgba(90, 60, 120, 0.15) !important;
+    border-color: #8f75b8 !important;
+}
+
+.message.whisper .message-bubble::after {
+    background: #8f75b8 !important;
+}
+
+.whisper-label {
+    font-family: var(--font-pixel);
+    font-size: 7px;
+    color: #c4a8e8;
+    letter-spacing: 1px;
+    padding: 2px 6px;
+    background: rgba(143, 117, 184, 0.2);
+    border: 1px solid rgba(143, 117, 184, 0.4);
+    display: inline-block;
+    margin-bottom: 4px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   MENTION HIGHLIGHT
+   ══════════════════════════════════════════════════════════════ */
+
+.mention-tag {
+    color: #ffe066;
+    font-weight: bold;
+    background: rgba(255, 224, 102, 0.12);
+    padding: 0 3px;
+    border-radius: 2px;
+    cursor: default;
+}
+
+.message.mention-highlight .message-bubble {
+    box-shadow:
+        inset 0 0 0 2px rgba(255, 224, 102, 0.25),
+        4px 4px 0 var(--bg0) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DELETED / UNSENT MESSAGE TOMBSTONE
+   ══════════════════════════════════════════════════════════════ */
+
+.message.deleted .message-bubble {
+    background: var(--bg1) !important;
+    border-color: var(--bg4) !important;
+    border-style: dashed !important;
+    opacity: 0.6;
+}
+
+.message.deleted .message-bubble::after {
+    display: none;
+}
+
+.deleted-tombstone {
+    font-family: var(--font-readable);
+    font-size: 16px;
+    color: var(--t-dim);
+    font-style: italic;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.deleted-tombstone-icon {
+    font-size: 14px;
+    opacity: 0.6;
+}

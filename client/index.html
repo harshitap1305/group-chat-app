@@ -352,6 +352,16 @@
                         </div>
                     </div>
 
+                    <!-- Reply preview bar -->
+                    <div class="reply-preview-bar hidden" id="reply-preview-bar">
+                        <span class="reply-preview-icon">↳</span>
+                        <div class="reply-preview-content">
+                            <span class="reply-preview-username" id="reply-preview-username"></span>
+                            <span class="reply-preview-text" id="reply-preview-text"></span>
+                        </div>
+                        <button class="reply-preview-close" id="reply-preview-close" title="Cancel reply">✕</button>
+                    </div>
+
                     <!-- Attachment preview bar -->
                     <div class="attachment-preview-bar hidden" id="attachment-preview-bar">
                         <span class="attachment-icon">📎</span>
@@ -363,6 +373,7 @@
                     <div class="input-row">
                         <input type="file" id="file-input" style="display: none;">
                         <button class="attachment-toggle-btn" id="attachment-toggle-btn" title="Attach media/file">📎</button>
+                        <button class="voice-memo-btn" id="voice-memo-btn" title="Hold to record voice memo">🎤</button>
                         <button class="emoji-toggle-btn" id="emoji-toggle-btn" title="Emoji">☺</button>
                         <div class="pixel-input-wrap chat-input-wrap">
                             <span class="input-prompt">▸</span>

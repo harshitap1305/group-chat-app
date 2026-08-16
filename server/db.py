@@ -36,6 +36,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id     TEXT    NOT NULL DEFAULT 'default',
+    msg_id      TEXT    NOT NULL DEFAULT '',       -- client-generated UUID for stable references
     username    TEXT    NOT NULL,
     avatar      TEXT    NOT NULL DEFAULT 'wizard',
     ciphertext  TEXT    NOT NULL,   -- base64 AES-GCM ciphertext
@@ -44,7 +45,10 @@ CREATE TABLE IF NOT EXISTS messages (
     public_key  TEXT    NOT NULL,   -- JSON JWK of sender's ECDSA public key
     timestamp   TEXT    NOT NULL,
     hmac_digest TEXT    NOT NULL,   -- HMAC-SHA256(ciphertext || iv) for tamper detection
-    sig_valid   INTEGER NOT NULL DEFAULT 1  -- 1=valid, 0=invalid (recorded at receive time)
+    sig_valid   INTEGER NOT NULL DEFAULT 1,  -- 1=valid, 0=invalid (recorded at receive time)
+    reply_to    TEXT    DEFAULT NULL,          -- msg_id of parent message (threaded replies)
+    is_deleted  INTEGER NOT NULL DEFAULT 0,   -- 1=tombstone (unsent/deleted)
+    target_user TEXT    DEFAULT NULL           -- non-null = whisper to this username
 );
 
 CREATE TABLE IF NOT EXISTS user_keys (
@@ -79,6 +83,18 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     if "room_id" not in columns:
         conn.execute("ALTER TABLE messages ADD COLUMN room_id TEXT NOT NULL DEFAULT 'default'")
         print("[DB] Migration: added room_id column to messages")
+    if "msg_id" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN msg_id TEXT NOT NULL DEFAULT ''")
+        print("[DB] Migration: added msg_id column to messages")
+    if "reply_to" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN reply_to TEXT DEFAULT NULL")
+        print("[DB] Migration: added reply_to column to messages")
+    if "is_deleted" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0")
+        print("[DB] Migration: added is_deleted column to messages")
+    if "target_user" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN target_user TEXT DEFAULT NULL")
+        print("[DB] Migration: added target_user column to messages")
 
     cursor = conn.execute("PRAGMA table_info(rooms)")
     columns = {row[1] for row in cursor.fetchall()}
@@ -193,6 +209,9 @@ def save_message(
     public_key: dict,
     timestamp: str,
     sig_valid: bool,
+    msg_id: str = "",
+    reply_to: str | None = None,
+    target_user: str | None = None,
 ) -> int:
     """
     Persist an encrypted, signed message to the DB.
@@ -206,11 +225,13 @@ def save_message(
         cur = conn.execute(
             """
             INSERT INTO messages
-                (room_id, username, avatar, ciphertext, iv, signature, public_key, timestamp, hmac_digest, sig_valid)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (room_id, msg_id, username, avatar, ciphertext, iv, signature, public_key,
+                 timestamp, hmac_digest, sig_valid, reply_to, target_user)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 room_id,
+                msg_id,
                 username,
                 avatar,
                 ciphertext,
@@ -220,21 +241,25 @@ def save_message(
                 timestamp,
                 hmac_digest,
                 1 if sig_valid else 0,
+                reply_to,
+                target_user,
             ),
         )
         return cur.lastrowid
 
 
-def get_history(room_id: str, limit: int = 50) -> list[dict]:
+def get_history(room_id: str, limit: int = 50, username: str | None = None) -> list[dict]:
     """
     Return the last `limit` messages for a given room.
+    Whispers (target_user IS NOT NULL) are only returned if the requesting
+    user is either the sender or the target.
     Each row is enriched with a `tampered` flag (True if HMAC mismatch).
     """
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT username, avatar, ciphertext, iv, signature, public_key,
-                   timestamp, hmac_digest, sig_valid
+            SELECT msg_id, username, avatar, ciphertext, iv, signature, public_key,
+                   timestamp, hmac_digest, sig_valid, reply_to, is_deleted, target_user
             FROM messages
             WHERE room_id = ?
             ORDER BY id DESC
@@ -245,10 +270,17 @@ def get_history(room_id: str, limit: int = 50) -> list[dict]:
 
     messages = []
     for row in reversed(rows):  # chronological order
+        # Filter whispers: only include if user is sender or target
+        tgt = row["target_user"]
+        if tgt and username:
+            if row["username"].lower() != username.lower() and tgt.lower() != username.lower():
+                continue  # skip — this whisper isn't for us
+
         tampered = not _verify_hmac(row["ciphertext"], row["iv"], row["hmac_digest"])
         messages.append(
             {
                 "type": "message",
+                "msg_id": row["msg_id"],
                 "username": row["username"],
                 "avatar": row["avatar"],
                 "ciphertext": row["ciphertext"],
@@ -258,9 +290,54 @@ def get_history(room_id: str, limit: int = 50) -> list[dict]:
                 "timestamp": row["timestamp"],
                 "sig_valid": bool(row["sig_valid"]),
                 "tampered": tampered,
+                "reply_to": row["reply_to"],
+                "is_deleted": bool(row["is_deleted"]),
+                "target_user": row["target_user"],
             }
         )
     return messages
+
+
+def get_message_by_id(msg_id: str) -> dict | None:
+    """Retrieve a single message by its client-generated msg_id."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT msg_id, username, avatar, ciphertext, iv, timestamp, is_deleted, target_user FROM messages WHERE msg_id = ?",
+            (msg_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "msg_id":      row["msg_id"],
+        "username":    row["username"],
+        "avatar":      row["avatar"],
+        "ciphertext":  row["ciphertext"],
+        "iv":          row["iv"],
+        "timestamp":   row["timestamp"],
+        "is_deleted":  bool(row["is_deleted"]),
+        "target_user": row["target_user"],
+    }
+
+
+def delete_message(msg_id: str, username: str) -> bool:
+    """
+    Soft-delete a message by setting is_deleted = 1 and clearing ciphertext.
+    Only succeeds if the requesting user is the original sender.
+    Returns True if a row was updated, False otherwise.
+    """
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE messages
+            SET is_deleted = 1, ciphertext = '', iv = '', signature = ''
+            WHERE msg_id = ? AND username = ? COLLATE NOCASE AND is_deleted = 0
+            """,
+            (msg_id, username),
+        )
+        updated = cur.rowcount > 0
+    if updated:
+        print(f"[DB] Message '{msg_id}' deleted by {username}")
+    return updated
 
 
 # ── User key registry ─────────────────────────────────────────────────────────
