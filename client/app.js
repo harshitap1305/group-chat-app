@@ -1281,7 +1281,8 @@ function handleMessageDeleted(msgId, deletedBy) {
     // Find the message DOM element
     const el = messagesScroll.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
     if (el) {
-        el.className = el.className.replace(/(own|other|whisper|mention-highlight)/g, '').trim() + " message deleted";
+        el.classList.remove("whisper", "mention-highlight");
+        el.classList.add("deleted");
         const bubble = el.querySelector(".message-bubble");
         if (bubble) {
             bubble.innerHTML = `
