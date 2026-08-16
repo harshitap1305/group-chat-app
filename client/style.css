@@ -2797,6 +2797,34 @@ body {
     animation: blink 1s steps(1) infinite;
 }
 
+.chat-attachment-voice {
+    margin-top: 6px;
+}
+
+.voice-memo-player-box {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--bg0);
+    border: 2px solid var(--sage-dk);
+    padding: 6px 8px;
+    box-shadow: 2px 2px 0 var(--bg0);
+}
+
+.voice-e2e-badge {
+    font-family: var(--font-pixel);
+    font-size: 7px;
+    color: var(--sage);
+    letter-spacing: 0.5px;
+}
+
+.voice-memo-player-box audio {
+    height: 32px;
+    width: 220px;
+    max-width: 100%;
+}
+
+
 /* ══════════════════════════════════════════════════════════════
    REPLY PREVIEW BAR (above input when replying)
    ══════════════════════════════════════════════════════════════ */

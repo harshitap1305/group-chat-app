@@ -869,7 +869,18 @@ function addOwnMessageOptimistic(text, msgId, attachment = null, replyTo = null,
 }
 
 function buildAttachmentHtml(attachment) {
-    if (!attachment || !attachment.url) return "";
+    if (!attachment) return "";
+    if (attachment.type === "voice_memo" && attachment.audio) {
+        const audioUrl = escapeHtml(attachment.audio);
+        return `
+            <div class="chat-attachment chat-attachment-voice">
+                <div class="voice-memo-player-box">
+                    <span class="voice-e2e-badge">🔒 E2EE VOICE MEMO</span>
+                    <audio controls src="${audioUrl}"></audio>
+                </div>
+            </div>`;
+    }
+    if (!attachment.url) return "";
     const fileUrl  = escapeHtml(attachment.url);
     const fileName = escapeHtml(attachment.fileName || "attachment");
     const fileType = (attachment.fileType || "").toLowerCase();
@@ -1037,11 +1048,24 @@ async function renderHistory(messages) {
                     msg.timestamp, msg.avatar, null, false, true, msg.msg_id, null, msg.target_user);
                 continue;
             }
+
+            let finalAttachment = msg.attachment;
+            let text = plaintext;
+            if (plaintext && (plaintext.startsWith('{"type":"voice_memo"') || plaintext.startsWith('{"type": "voice_memo"'))) {
+                try {
+                    const voiceObj = JSON.parse(plaintext);
+                    if (voiceObj && voiceObj.audio) {
+                        finalAttachment = { type: "voice_memo", audio: voiceObj.audio };
+                        text = "";
+                    }
+                } catch (e) {}
+            }
+
             // Cache for reply lookups and editing
             if (msg.msg_id) {
                 messageCache.set(msg.msg_id, {
                     username: msg.username,
-                    text: plaintext,
+                    text: text,
                     created_at_ts: msg.created_at_ts,
                     is_edited: msg.is_edited,
                     ciphertext: msg.ciphertext,
@@ -1053,8 +1077,8 @@ async function renderHistory(messages) {
             const sigValid  = msg.public_key
                 ? await verifySignature(material, msg.signature, msg.public_key)
                 : false;
-            addChatMessage(msg.username, plaintext, msg.timestamp, msg.avatar,
-                msg.attachment, sigValid, msg.tampered === true,
+            addChatMessage(msg.username, text, msg.timestamp, msg.avatar,
+                finalAttachment, sigValid, msg.tampered === true,
                 msg.msg_id, msg.reply_to, msg.target_user, msg.is_edited === true, msg.created_at_ts);
         }
     }
@@ -1382,26 +1406,43 @@ async function startVoiceRecording() {
 
             if (audioChunks.length === 0) return;
 
-            const ext = mediaRecorder.mimeType.includes("webm") ? "webm" : "ogg";
-            const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
-            const file = new File([blob], `voice-memo.${ext}`, { type: mediaRecorder.mimeType });
+            const mime = mediaRecorder.mimeType || getMimeType();
+            const blob = new Blob(audioChunks, { type: mime });
 
-            // Upload via existing /upload endpoint
-            const formData = new FormData();
-            formData.append("file", file);
-            try {
-                const res = await fetch(UPLOAD_URL, { method: "POST", body: formData });
-                if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-                const uploadData = await res.json();
-                if (uploadData.url && uploadData.url.startsWith("/")) {
-                    uploadData.url = `${HTTP_PROTOCOL}//${BACKEND_HOST}${uploadData.url}`;
+            const reader = new FileReader();
+            reader.readAsDataURL(blob);
+            reader.onloadend = async () => {
+                const audioDataUrl = reader.result;
+                const voicePayload = JSON.stringify({ type: "voice_memo", mime: mime, audio: audioDataUrl });
+                const msgId = generateUuid();
+
+                // 1. Encrypt voice payload with AES-GCM
+                const { ciphertext, iv } = await encryptMessage(voicePayload);
+
+                // 2. Sign over material (ciphertext + iv)
+                const material  = ciphertext + iv;
+                const signature = await signMaterial(material);
+
+                // 3. Send over WebSocket
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type:          "message",
+                        ciphertext:    ciphertext,
+                        iv:            iv,
+                        signature:     signature,
+                        public_key:    myPublicKeyJwk,
+                        client_msg_id: msgId,
+                        attachment:    { type: "voice_memo" },
+                        reply_to:      replyToMsgId || null,
+                        target_user:   targetUser,
+                    }));
+
+                    playSound("message");
+                    addOwnMessageOptimistic("", msgId, { type: "voice_memo", audio: audioDataUrl }, replyToMsgId, targetUser);
+                    clearReply();
+                    incrementMessageCount();
                 }
-                // Send as attachment-only message
-                attachmentData = uploadData;
-                await sendMessage();
-            } catch (err) {
-                console.error("[VoiceMemo] Upload failed:", err);
-            }
+            };
         };
 
         mediaRecorder.start();
