@@ -505,32 +505,14 @@ def timestamp() -> str:
 
 
 def _schedule_room_cleanup(room_id: str):
-    """Start a cleanup timer for an empty room."""
-    global cleanup_tasks
-
-    async def _cleanup():
-        try:
-            await asyncio.sleep(CLEANUP_TIMEOUT)
-            if manager.get_room_count(room_id) == 0:
-                db.clear_room_history(room_id)
-                print(f"[!] Room '{room_id}' empty for {CLEANUP_TIMEOUT}s — history cleared.")
-        except asyncio.CancelledError:
-            pass
-
-    old = cleanup_tasks.get(room_id)
-    if old and not old.done():
-        old.cancel()
-    cleanup_tasks[room_id] = asyncio.create_task(_cleanup())
-    print(f"[*] Room '{room_id}' is empty — scheduled {CLEANUP_TIMEOUT}s history cleanup.")
+    """No automatic cleanup — messages persist in database forever unless deleted by room creator."""
+    pass
 
 
 def _cancel_room_cleanup(room_id: str):
-    """Cancel any pending cleanup timer for a room."""
-    task = cleanup_tasks.get(room_id)
-    if task and not task.done():
-        task.cancel()
-        cleanup_tasks.pop(room_id, None)
-        print(f"[*] User joined room '{room_id}' — cancelled cleanup timer.")
+    """No-op: automatic cleanup timers are disabled."""
+    pass
+
 
 
 # ── WebSocket Endpoint ────────────────────────────────────────────────────────
