@@ -755,37 +755,6 @@ body {
     flex-shrink: 0;
 }
 
-/* ── Sidebar footer stats ────────────────────────────────────── */
-.panel-stats {
-    display: flex;
-    gap: 0;
-    flex-shrink: 0;
-}
-
-.pstat {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 8px 4px;
-    border-top: 4px solid var(--bg4);
-    border-right: 2px solid var(--bg4);
-    background: var(--bg2);
-    gap: 4px;
-}
-
-.pstat:last-child { border-right: none; }
-
-.pstat-val {
-    font-size: 12px;
-    color: var(--cream);
-}
-
-.pstat-key {
-    font-size: 8px;
-    color: var(--t-muted);
-    letter-spacing: 1px;
-}
 
 /* ══════════════════════════════════════════════════════════════
    MAIN CHAT AREA
@@ -1871,11 +1840,6 @@ body {
     letter-spacing: 1px;
 }
 
-/* Stat values in sidebar footer */
-.pstat-val {
-    font-family: var(--font-readable);
-    font-size: 22px;
-}
 
 /* ── Attachment UI & Media Sharing ─────────────────────────── */
 .attachment-toggle-btn {

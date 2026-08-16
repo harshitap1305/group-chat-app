@@ -461,9 +461,7 @@ const xpBarFill   = document.getElementById("xp-bar-fill");
 const xpValue     = document.getElementById("xp-value");
 const rankNameEl  = document.getElementById("rank-name");
 const onlineBadge = document.getElementById("online-count-badge");
-const msgCountEl  = document.getElementById("msg-count-stat");
-const streakEl    = document.getElementById("streak-count");
-const sessionTimeEl  = document.getElementById("session-time-stat");
+
 const levelupToast   = document.getElementById("levelup-toast");
 const levelupSub     = document.getElementById("levelup-sub");
 
@@ -1113,14 +1111,13 @@ function checkLevelUp() {
     }
 }
 
-function incrementStreak()      { streakCount++; if (streakEl) streakEl.textContent = streakCount; }
-function incrementMessageCount(){ messagesSent++; if (msgCountEl) msgCountEl.textContent = messagesSent; incrementStreak(); }
+function incrementStreak()      { streakCount++; }
+function incrementMessageCount(){ messagesSent++; incrementStreak(); }
 
 function startSessionTimer() {
     sessionStart = Date.now();
     sessionTimer = setInterval(() => {
         const min = Math.floor((Date.now() - sessionStart) / 60000);
-        if (sessionTimeEl) sessionTimeEl.textContent = min >= 60 ? `${Math.floor(min/60)}H${min%60}M` : `${min}M`;
         // Send heartbeat — server awards +5 XP/min and sends back xp_update
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "heartbeat" }));
@@ -1877,9 +1874,6 @@ function leaveChat() {
     // Reset per-session stats — totalXP is NOT reset (it's DB-persisted)
     streakCount = 0; messagesSent = 0;
     currentLevel = getCurrentRank().level;
-    if (msgCountEl) msgCountEl.textContent = "0";
-    if (streakEl)   streakEl.textContent   = "0";
-    if (sessionTimeEl) sessionTimeEl.textContent = "0M";
     updateXPBar(); // redraw bar at persisted XP level
     // Reset room state
     currentRoomId = null; currentRoomName = null; currentRoomAvatar = null;
