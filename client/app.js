@@ -188,9 +188,12 @@ let recordingStart = 0;
 // Message cache for reply lookup
 const messageCache = new Map(); // msg_id → { username, text }
 
+let pendingFilePayload = null;
+
 function clearPendingAttachment() {
     attachmentData = null;
     pendingFile    = null;
+    pendingFilePayload = null;
     if (attachmentPreviewBar) attachmentPreviewBar.classList.add("hidden");
     if (attachmentFilename)  attachmentFilename.textContent  = "";
     if (attachmentFilesize)  attachmentFilesize.textContent  = "";
@@ -647,15 +650,41 @@ async function handleIncomingEncryptedMessage(data) {
         return;
     }
 
+    let finalAttachment = attachment;
+    let text = plaintext;
+    if (plaintext && (plaintext.startsWith('{"type":"voice_memo"') || plaintext.startsWith('{"type": "voice_memo"'))) {
+        try {
+            const voiceObj = JSON.parse(plaintext);
+            if (voiceObj && voiceObj.audio) {
+                finalAttachment = { type: "voice_memo", audio: voiceObj.audio };
+                text = "";
+            }
+        } catch (e) {}
+    } else if (plaintext && (plaintext.startsWith('{"type":"encrypted_file"') || plaintext.startsWith('{"type": "encrypted_file"'))) {
+        try {
+            const fileObj = JSON.parse(plaintext);
+            if (fileObj && fileObj.data) {
+                finalAttachment = {
+                    type: "encrypted_file",
+                    fileName: fileObj.fileName,
+                    fileType: fileObj.fileType,
+                    fileSize: fileObj.fileSize,
+                    data: fileObj.data,
+                };
+                text = "";
+            }
+        } catch (e) {}
+    }
+
     // Cache for reply lookups and editing
     const createdTs = data.created_at_ts || (Date.now() / 1000);
-    if (msg_id) messageCache.set(msg_id, { username, text: plaintext, created_at_ts: createdTs, is_edited: data.is_edited, ciphertext, iv });
+    if (msg_id) messageCache.set(msg_id, { username, text, created_at_ts: createdTs, is_edited: data.is_edited, ciphertext, iv });
 
     // Client-side ECDSA verification
     const material  = ciphertext + iv;
     const sigValid  = public_key ? await verifySignature(material, signature, public_key) : false;
 
-    addChatMessage(username, plaintext, timestamp, avatar, attachment, sigValid,
+    addChatMessage(username, text, timestamp, avatar, finalAttachment, sigValid,
         tampered === true, msg_id, reply_to, target_user, data.is_edited === true, createdTs);
 }
 
@@ -872,13 +901,23 @@ function buildAttachmentHtml(attachment) {
     if (!attachment) return "";
     if (attachment.type === "voice_memo" && attachment.audio) {
         const audioUrl = escapeHtml(attachment.audio);
-        return `
-            <div class="chat-attachment chat-attachment-voice">
-                <div class="voice-memo-player-box">
-                    <span class="voice-e2e-badge">🔒 E2EE VOICE MEMO</span>
-                    <audio controls src="${audioUrl}"></audio>
-                </div>
-            </div>`;
+        return `<div class="chat-attachment chat-attachment-voice"><audio controls src="${audioUrl}"></audio></div>`;
+    }
+    if (attachment.type === "encrypted_file" && attachment.data) {
+        const fileName = escapeHtml(attachment.fileName || "file");
+        const fileType = (attachment.fileType || "").toLowerCase();
+        const fileSize = formatBytes(attachment.fileSize || 0);
+
+        if (fileType.startsWith("image/")) {
+            return `<div class="chat-attachment chat-attachment-image"><a href="${attachment.data}" target="_blank" download="${fileName}"><img src="${attachment.data}" alt="${fileName}"></a></div>`;
+        } else if (fileType.startsWith("video/")) {
+            return `<div class="chat-attachment chat-attachment-video"><video controls src="${attachment.data}"></video></div>`;
+        } else if (fileType.startsWith("audio/")) {
+            return `<div class="chat-attachment chat-attachment-audio"><audio controls src="${attachment.data}"></audio></div>`;
+        } else {
+            const icon = getFileIcon(fileType, fileName);
+            return `<div class="chat-attachment"><a href="${attachment.data}" download="${fileName}" class="chat-attachment-file"><span class="file-card-icon">${icon}</span><div class="file-card-details"><span class="file-card-name">${fileName}</span><span class="file-card-size">${fileSize}</span></div><span class="file-card-dl-btn">💾 DOWNLOAD</span></a></div>`;
+        }
     }
     if (!attachment.url) return "";
     const fileUrl  = escapeHtml(attachment.url);
@@ -1056,6 +1095,20 @@ async function renderHistory(messages) {
                     const voiceObj = JSON.parse(plaintext);
                     if (voiceObj && voiceObj.audio) {
                         finalAttachment = { type: "voice_memo", audio: voiceObj.audio };
+                        text = "";
+                    }
+                } catch (e) {}
+            } else if (plaintext && (plaintext.startsWith('{"type":"encrypted_file"') || plaintext.startsWith('{"type": "encrypted_file"'))) {
+                try {
+                    const fileObj = JSON.parse(plaintext);
+                    if (fileObj && fileObj.data) {
+                        finalAttachment = {
+                            type: "encrypted_file",
+                            fileName: fileObj.fileName,
+                            fileType: fileObj.fileType,
+                            fileSize: fileObj.fileSize,
+                            data: fileObj.data,
+                        };
                         text = "";
                     }
                 } catch (e) {}
@@ -1594,7 +1647,7 @@ if (attachmentToggleBtn && fileInput) {
             if (attachmentData.url && attachmentData.url.startsWith("/")) {
                 attachmentData.url = `${HTTP_PROTOCOL}//${BACKEND_HOST}${attachmentData.url}`;
             }
-            attachmentFilesize.textContent = `(${formatBytes(attachmentData.fileSize)})`;
+            attachmentFilesize.textContent = `(DONE - ${formatBytes(attachmentData.fileSize)})`;
         } catch (err) {
             console.error("[Upload] failed:", err);
             attachmentFilename.textContent = "UPLOAD FAILED";
