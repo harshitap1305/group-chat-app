@@ -225,9 +225,15 @@ function hexToBytes(hex) {
     return arr;
 }
 
-/** ArrayBuffer → base64url string */
+/** ArrayBuffer → base64url string (chunk-safe for large buffers like audio) */
 function bufToB64(buf) {
-    return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    const chunkSize = 8192; // process 8KB at a time to avoid call stack overflow
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary)
         .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
