@@ -1005,6 +1005,8 @@ function showLoginError(message) {
 
 
 function saveSessionState() {
+    const activeScr = sessionStorage.getItem("pixel_active_screen") || "lobby";
+
     if (sessionToken) sessionStorage.setItem("pixel_session_token", sessionToken);
     if (currentUsername) sessionStorage.setItem("pixel_username", currentUsername);
     if (selectedAvatar) sessionStorage.setItem("pixel_avatar", selectedAvatar);
@@ -1012,19 +1014,28 @@ function saveSessionState() {
     else sessionStorage.removeItem("pixel_room_id");
     if (currentRoomName) sessionStorage.setItem("pixel_room_name", currentRoomName);
     else sessionStorage.removeItem("pixel_room_name");
-    if (currentRoomAvatar) sessionStorage.setItem("pixel_room_avatar", currentRoomAvatar);
-    else sessionStorage.removeItem("pixel_room_avatar");
+
+    if (sessionToken && currentUsername) {
+        const sessionObj = {
+            token: sessionToken,
+            username: currentUsername,
+            avatar: selectedAvatar,
+            activeScreen: activeScr,
+            roomId: currentRoomId,
+            roomName: currentRoomName,
+            screenX: window.screenX,
+            screenY: window.screenY,
+            outerWidth: window.outerWidth,
+            outerHeight: window.outerHeight,
+            timestamp: Date.now(),
+        };
+        localStorage.setItem("pixel_active_session", JSON.stringify(sessionObj));
+    }
 }
 
 function clearSavedSession() {
-    sessionStorage.removeItem("pixel_session_token");
-    sessionStorage.removeItem("pixel_username");
-    sessionStorage.removeItem("pixel_avatar");
-    sessionStorage.removeItem("pixel_active_screen");
-    sessionStorage.removeItem("pixel_room_id");
-    sessionStorage.removeItem("pixel_room_name");
-    sessionStorage.removeItem("pixel_room_avatar");
-    localStorage.clear();
+    sessionStorage.clear();
+    localStorage.removeItem("pixel_active_session");
 }
 
 function showChatScreen() {
@@ -2277,14 +2288,47 @@ if (lobbyLogoutBtn) {
 }
 
 async function tryRestoreSession() {
-    localStorage.clear();
+    let savedToken    = sessionStorage.getItem("pixel_session_token");
+    let savedUsername = sessionStorage.getItem("pixel_username");
+    let savedAvatar   = sessionStorage.getItem("pixel_avatar");
+    let activeScreen  = sessionStorage.getItem("pixel_active_screen");
+    let savedRoomId   = sessionStorage.getItem("pixel_room_id");
+    let savedRoomName = sessionStorage.getItem("pixel_room_name");
 
-    const savedToken    = sessionStorage.getItem("pixel_session_token");
-    const savedUsername = sessionStorage.getItem("pixel_username");
-    const savedAvatar   = sessionStorage.getItem("pixel_avatar");
-    const activeScreen  = sessionStorage.getItem("pixel_active_screen");
-    const savedRoomId   = sessionStorage.getItem("pixel_room_id");
-    const savedRoomName = sessionStorage.getItem("pixel_room_name");
+    // If tab's sessionStorage is empty (e.g. Cmd+T new tab in same window)
+    if (!savedToken || !savedUsername) {
+        const storedStr = localStorage.getItem("pixel_active_session");
+        if (storedStr) {
+            try {
+                const stored = JSON.parse(storedStr);
+                if (stored && stored.token && stored.username) {
+                    const diffX = Math.abs(window.screenX - (stored.screenX || 0));
+                    const diffY = Math.abs(window.screenY - (stored.screenY || 0));
+                    const diffW = Math.abs(window.outerWidth - (stored.outerWidth || 0));
+                    const diffH = Math.abs(window.outerHeight - (stored.outerHeight || 0));
+
+                    // Same window check: screen position and outer dimensions match closely
+                    const isSameWindow = (diffX <= 80 && diffY <= 80) || (diffW <= 30 && diffH <= 30);
+
+                    if (isSameWindow) {
+                        savedToken    = stored.token;
+                        savedUsername = stored.username;
+                        savedAvatar   = stored.avatar;
+                        activeScreen  = stored.activeScreen || "lobby";
+                        savedRoomId   = stored.roomId;
+                        savedRoomName = stored.roomName;
+
+                        sessionStorage.setItem("pixel_session_token", savedToken);
+                        sessionStorage.setItem("pixel_username", savedUsername);
+                        if (savedAvatar) sessionStorage.setItem("pixel_avatar", savedAvatar);
+                        sessionStorage.setItem("pixel_active_screen", activeScreen);
+                        if (savedRoomId) sessionStorage.setItem("pixel_room_id", savedRoomId);
+                        if (savedRoomName) sessionStorage.setItem("pixel_room_name", savedRoomName);
+                    }
+                }
+            } catch (e) {}
+        }
+    }
 
     if (savedToken && savedUsername) {
         sessionToken    = savedToken;
@@ -2300,10 +2344,11 @@ async function tryRestoreSession() {
             } else {
                 showLobbyScreen();
             }
+            saveSessionState();
             return true;
         } catch (err) {
             console.warn("[SessionRestore] Could not restore session:", err);
-            clearSavedSession();
+            sessionStorage.clear();
         }
     }
     return false;
