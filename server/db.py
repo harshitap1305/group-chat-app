@@ -46,9 +46,11 @@ CREATE TABLE IF NOT EXISTS messages (
     timestamp   TEXT    NOT NULL,
     hmac_digest TEXT    NOT NULL,   -- HMAC-SHA256(ciphertext || iv) for tamper detection
     sig_valid   INTEGER NOT NULL DEFAULT 1,  -- 1=valid, 0=invalid (recorded at receive time)
-    reply_to    TEXT    DEFAULT NULL,          -- msg_id of parent message (threaded replies)
-    is_deleted  INTEGER NOT NULL DEFAULT 0,   -- 1=tombstone (unsent/deleted)
-    target_user TEXT    DEFAULT NULL           -- non-null = whisper to this username
+    reply_to      TEXT    DEFAULT NULL,          -- msg_id of parent message (threaded replies)
+    is_deleted    INTEGER NOT NULL DEFAULT 0,   -- 1=tombstone (unsent/deleted)
+    target_user   TEXT    DEFAULT NULL,          -- non-null = whisper to this username
+    is_edited     INTEGER NOT NULL DEFAULT 0,   -- 1=edited message
+    created_at_ts REAL    DEFAULT NULL           -- unix epoch timestamp for edit window validation
 );
 
 CREATE TABLE IF NOT EXISTS user_keys (
@@ -95,6 +97,12 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     if "target_user" not in columns:
         conn.execute("ALTER TABLE messages ADD COLUMN target_user TEXT DEFAULT NULL")
         print("[DB] Migration: added target_user column to messages")
+    if "is_edited" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN is_edited INTEGER NOT NULL DEFAULT 0")
+        print("[DB] Migration: added is_edited column to messages")
+    if "created_at_ts" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN created_at_ts REAL DEFAULT NULL")
+        print("[DB] Migration: added created_at_ts column to messages")
 
     cursor = conn.execute("PRAGMA table_info(rooms)")
     columns = {row[1] for row in cursor.fetchall()}
@@ -230,14 +238,16 @@ def save_message(
     """
     hmac_digest = _compute_hmac(ciphertext, iv)
     pub_key_json = json.dumps(public_key)
+    import time
+    created_at_ts = time.time()
 
     with _connect() as conn:
         cur = conn.execute(
             """
             INSERT INTO messages
                 (room_id, msg_id, username, avatar, ciphertext, iv, signature, public_key,
-                 timestamp, hmac_digest, sig_valid, reply_to, target_user)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 timestamp, hmac_digest, sig_valid, reply_to, target_user, is_edited, created_at_ts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
             """,
             (
                 room_id,
@@ -253,30 +263,34 @@ def save_message(
                 1 if sig_valid else 0,
                 reply_to,
                 target_user,
+                created_at_ts,
             ),
         )
         return cur.lastrowid
 
 
-def get_history(room_id: str, limit: int = 50, username: str | None = None) -> list[dict]:
+def get_history(room_id: str, limit: int | None = None, username: str | None = None) -> list[dict]:
     """
-    Return the last `limit` messages for a given room.
+    Return history messages for a given room (unlimited if limit is None).
     Whispers (target_user IS NOT NULL) are only returned if the requesting
     user is either the sender or the target.
     Each row is enriched with a `tampered` flag (True if HMAC mismatch).
     """
+    sql = """
+        SELECT msg_id, username, avatar, ciphertext, iv, signature, public_key,
+               timestamp, hmac_digest, sig_valid, reply_to, is_deleted, target_user,
+               is_edited, created_at_ts
+        FROM messages
+        WHERE room_id = ?
+        ORDER BY id DESC
+    """
+    params = [room_id]
+    if limit is not None and limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+
     with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT msg_id, username, avatar, ciphertext, iv, signature, public_key,
-                   timestamp, hmac_digest, sig_valid, reply_to, is_deleted, target_user
-            FROM messages
-            WHERE room_id = ?
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (room_id, limit),
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
 
     messages = []
     for row in reversed(rows):  # chronological order
@@ -303,6 +317,8 @@ def get_history(room_id: str, limit: int = 50, username: str | None = None) -> l
                 "reply_to": row["reply_to"],
                 "is_deleted": bool(row["is_deleted"]),
                 "target_user": row["target_user"],
+                "is_edited": bool(row["is_edited"]),
+                "created_at_ts": row["created_at_ts"],
             }
         )
     return messages
@@ -348,6 +364,52 @@ def delete_message(msg_id: str, username: str) -> bool:
     if updated:
         print(f"[DB] Message '{msg_id}' deleted by {username}")
     return updated
+
+
+def edit_message(
+    msg_id: str,
+    username: str,
+    ciphertext: str,
+    iv: str,
+    signature: str,
+    sig_valid: bool,
+) -> tuple[bool, str]:
+    """
+    Edit an existing message's ciphertext, iv, and signature.
+    Validates that:
+      1. Message exists and is not deleted.
+      2. Requesting user matches the original sender.
+      3. Less than 5 minutes (300 seconds) have elapsed since creation.
+    """
+    import time
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT username, created_at_ts, is_deleted FROM messages WHERE msg_id = ?",
+            (msg_id,),
+        ).fetchone()
+
+        if not row:
+            return False, "Message not found."
+        if bool(row["is_deleted"]):
+            return False, "Cannot edit a deleted message."
+        if row["username"].lower() != username.lower():
+            return False, "You can only edit your own messages."
+
+        created_ts = row["created_at_ts"]
+        if created_ts and (time.time() - created_ts > 300):
+            return False, "Message edit window (5 minutes) has expired."
+
+        hmac_digest = _compute_hmac(ciphertext, iv)
+        conn.execute(
+            """
+            UPDATE messages
+            SET ciphertext = ?, iv = ?, signature = ?, hmac_digest = ?, sig_valid = ?, is_edited = 1
+            WHERE msg_id = ?
+            """,
+            (ciphertext, iv, signature, hmac_digest, 1 if sig_valid else 0, msg_id),
+        )
+    print(f"[DB] Message '{msg_id}' edited by {username}")
+    return True, "Message updated successfully."
 
 
 # ── User key registry ─────────────────────────────────────────────────────────

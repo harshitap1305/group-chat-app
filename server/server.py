@@ -585,8 +585,8 @@ async def websocket_endpoint(websocket: WebSocket):
             "users": manager.get_room_users(room_id),
         })
 
-        # Send DB-backed history to the new joiner
-        history = db.get_history(room_id=room_id, limit=50, username=username)
+        # Send DB-backed history to the new joiner (unlimited history)
+        history = db.get_history(room_id=room_id, limit=None, username=username)
         if history:
             await websocket.send_json({
                 "type":     "history",
@@ -695,6 +695,46 @@ async def websocket_endpoint(websocket: WebSocket):
                         await websocket.send_json({
                             "type":    "error",
                             "message": "Could not delete message.",
+                        })
+
+            # ── Edit message (5-minute window) ────────────────────────
+            elif msg_type == "edit_message":
+                edit_msg_id = data.get("msg_id", "")
+                ciphertext  = data.get("ciphertext", "")
+                iv          = data.get("iv", "")
+                signature   = data.get("signature", "")
+                sender_key  = data.get("public_key") or db.get_user_key(username) or {}
+
+                if edit_msg_id and ciphertext and iv and signature:
+                    signed_material = (ciphertext + iv).encode("utf-8")
+                    sig_valid = verify_ecdsa_signature(signed_material, signature, sender_key)
+
+                    success, err_msg = db.edit_message(
+                        msg_id     = edit_msg_id,
+                        username   = username,
+                        ciphertext = ciphertext,
+                        iv         = iv,
+                        signature  = signature,
+                        sig_valid  = sig_valid,
+                    )
+
+                    if success:
+                        # Broadcast edited message payload to entire room
+                        await manager.send_to_all_in_room(room_id, {
+                            "type":       "message_edited",
+                            "msg_id":     edit_msg_id,
+                            "username":   username,
+                            "ciphertext": ciphertext,
+                            "iv":         iv,
+                            "signature":  signature,
+                            "public_key": sender_key,
+                            "sig_valid":  sig_valid,
+                            "is_edited":  True,
+                        })
+                    else:
+                        await websocket.send_json({
+                            "type":    "error",
+                            "message": err_msg,
                         })
 
             # ── Clear room history (creator only) ──────────────────────

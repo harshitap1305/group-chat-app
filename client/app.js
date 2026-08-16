@@ -582,6 +582,10 @@ function handleMessage(data) {
             handleMessageDeleted(data.msg_id, data.username);
             break;
 
+        case "message_edited":
+            handleIncomingEditedMessage(data);
+            break;
+
         case "receipt":
             updateReceipt(data.msg_id, data.status);
             break;
@@ -641,15 +645,16 @@ async function handleIncomingEncryptedMessage(data) {
         return;
     }
 
-    // Cache for reply lookups
-    if (msg_id) messageCache.set(msg_id, { username, text: plaintext });
+    // Cache for reply lookups and editing
+    const createdTs = data.created_at_ts || (Date.now() / 1000);
+    if (msg_id) messageCache.set(msg_id, { username, text: plaintext, created_at_ts: createdTs, is_edited: data.is_edited, ciphertext, iv });
 
     // Client-side ECDSA verification
     const material  = ciphertext + iv;
     const sigValid  = public_key ? await verifySignature(material, signature, public_key) : false;
 
     addChatMessage(username, plaintext, timestamp, avatar, attachment, sigValid,
-        tampered === true, msg_id, reply_to, target_user);
+        tampered === true, msg_id, reply_to, target_user, data.is_edited === true, createdTs);
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -685,7 +690,8 @@ function parseMentions(escapedText) {
  * tampered   — true = server flagged HMAC mismatch (DB was modified)
  */
 function addChatMessage(username, text, time, avatarId = "wizard", attachment = null,
-                        sigValid = true, tampered = false, msgId = null, replyTo = null, targetUser = null) {
+                        sigValid = true, tampered = false, msgId = null, replyTo = null,
+                        targetUser = null, isEdited = false, createdAtTs = null) {
     const isOwn      = username === currentUsername;
     const avatarData = getAvatarData(avatarId, username);
     const el         = document.createElement("div");
@@ -744,10 +750,15 @@ function addChatMessage(username, text, time, avatarId = "wizard", attachment = 
 
     let attachmentHtml = buildAttachmentHtml(attachment);
 
-    // Message action buttons (reply for everyone, delete for own)
+    const nowTs = Date.now() / 1000;
+    const msgAge = createdAtTs ? (nowTs - createdAtTs) : 0;
+    const canEdit = isOwn && (msgAge <= 300);
+
+    // Message action buttons (reply for everyone, delete/edit for own)
     let actionsHtml = `
         <div class="msg-actions">
             <button class="msg-action-btn reply-btn" title="Reply" data-msg-id="${escapeHtml(msgId || '')}" data-msg-user="${escapeHtml(username)}" data-msg-text="${escapeHtml(text || '')}">↩</button>
+            ${canEdit ? `<button class="msg-action-btn edit-btn" title="Edit message (5 min)" data-msg-id="${escapeHtml(msgId || '')}">✏️</button>` : ""}
             ${isOwn ? `<button class="msg-action-btn delete-btn" title="Delete" data-msg-id="${escapeHtml(msgId || '')}">🗑</button>` : ""}
         </div>`;
 
@@ -760,6 +771,7 @@ function addChatMessage(username, text, time, avatarId = "wizard", attachment = 
             <div class="message-meta">
                 <span class="message-username">${escapeHtml(username)}</span>
                 ${time ? `<span class="message-time">${escapeHtml(time)}</span>` : ""}
+                ${isEdited ? `<span class="edited-tag" title="This message was edited">(edited)</span>` : ""}
                 ${securityBadge}
             </div>
             ${text ? `<p class="message-text">${textHtml}</p>` : ""}
@@ -818,6 +830,7 @@ function addOwnMessageOptimistic(text, msgId, attachment = null, replyTo = null,
     let actionsHtml = `
         <div class="msg-actions">
             <button class="msg-action-btn reply-btn" title="Reply" data-msg-id="${escapeHtml(msgId || '')}" data-msg-user="${escapeHtml(currentUsername)}" data-msg-text="${escapeHtml(text || '')}">↩</button>
+            <button class="msg-action-btn edit-btn" title="Edit message (5 min)" data-msg-id="${escapeHtml(msgId || '')}">✏️</button>
             <button class="msg-action-btn delete-btn" title="Delete" data-msg-id="${escapeHtml(msgId || '')}">🗑</button>
         </div>`;
 
@@ -841,6 +854,16 @@ function addOwnMessageOptimistic(text, msgId, attachment = null, replyTo = null,
     messagesScroll.appendChild(el);
     scrollToBottom();
     pendingReceipts.set(msgId, document.getElementById(receiptId));
+
+    // Cache own message
+    if (msgId) {
+        messageCache.set(msgId, {
+            username: currentUsername,
+            text: text,
+            created_at_ts: Date.now() / 1000,
+            is_edited: false
+        });
+    }
 }
 
 function buildAttachmentHtml(attachment) {
@@ -987,8 +1010,17 @@ async function renderHistory(messages) {
                     msg.timestamp, msg.avatar, null, false, true, msg.msg_id, null, msg.target_user);
                 continue;
             }
-            // Cache for reply lookups
-            if (msg.msg_id) messageCache.set(msg.msg_id, { username: msg.username, text: plaintext });
+            // Cache for reply lookups and editing
+            if (msg.msg_id) {
+                messageCache.set(msg.msg_id, {
+                    username: msg.username,
+                    text: plaintext,
+                    created_at_ts: msg.created_at_ts,
+                    is_edited: msg.is_edited,
+                    ciphertext: msg.ciphertext,
+                    iv: msg.iv
+                });
+            }
 
             const material = msg.ciphertext + msg.iv;
             const sigValid  = msg.public_key
@@ -996,7 +1028,7 @@ async function renderHistory(messages) {
                 : false;
             addChatMessage(msg.username, plaintext, msg.timestamp, msg.avatar,
                 msg.attachment, sigValid, msg.tampered === true,
-                msg.msg_id, msg.reply_to, msg.target_user);
+                msg.msg_id, msg.reply_to, msg.target_user, msg.is_edited === true, msg.created_at_ts);
         }
     }
 
@@ -1516,6 +1548,31 @@ messagesScroll.addEventListener("click", (e) => {
         return;
     }
 
+    // Edit button
+    const editBtn = e.target.closest(".edit-btn");
+    if (editBtn) {
+        const msgId = editBtn.dataset.msgId;
+        if (!msgId) return;
+        const msgData = messageCache.get(msgId);
+        if (!msgData || !msgData.text) return;
+
+        const createdTs = msgData.created_at_ts || (Date.now() / 1000);
+        if ((Date.now() / 1000) - createdTs > 300) {
+            showInAppAlert("EDIT EXPIRED", "This message is older than 5 minutes and can no longer be edited.");
+            return;
+        }
+
+        currentEditingMsgId = msgId;
+        const inputEl = document.getElementById("edit-msg-input");
+        const overlay = document.getElementById("edit-modal-overlay");
+        if (inputEl && overlay) {
+            inputEl.value = msgData.text;
+            overlay.classList.remove("hidden");
+            inputEl.focus();
+        }
+        return;
+    }
+
     // Delete button
     const deleteBtn = e.target.closest(".delete-btn");
     if (deleteBtn) {
@@ -1581,7 +1638,122 @@ if (deleteRoomBtn) {
     });
 }
 
-// ── In-App Confirmation Modal Helpers ─────────────────────────────────────────
+// ── In-App Confirmation & Edit Modal Helpers ───────────────────────────────
+
+let currentEditingMsgId = null;
+
+async function handleIncomingEditedMessage(data) {
+    let decryptedText = "";
+    try {
+        decryptedText = await decryptMessage(data.ciphertext, data.iv);
+    } catch (e) {
+        decryptedText = "⚠️ [DECRYPTION FAILED]";
+    }
+
+    if (!decryptedText) decryptedText = "";
+
+    const cached = messageCache.get(data.msg_id) || {};
+    cached.text = decryptedText;
+    cached.is_edited = true;
+    cached.ciphertext = data.ciphertext;
+    cached.iv = data.iv;
+    cached.signature = data.signature;
+    messageCache.set(data.msg_id, cached);
+
+    const msgEl = messagesScroll.querySelector(`[data-msg-id="${CSS.escape(data.msg_id)}"]`);
+    if (msgEl) {
+        const textEl = msgEl.querySelector(".message-text");
+        if (textEl) {
+            const parsed = parseMentions(escapeHtml(decryptedText));
+            textEl.innerHTML = parsed.html;
+        }
+
+        const timeEl = msgEl.querySelector(".message-time");
+        if (timeEl && !msgEl.querySelector(".edited-tag")) {
+            const editedSpan = document.createElement("span");
+            editedSpan.className = "edited-tag";
+            editedSpan.title = "This message was edited";
+            editedSpan.textContent = "(edited)";
+            timeEl.after(editedSpan);
+        }
+
+        const replyBtn = msgEl.querySelector(".reply-btn");
+        if (replyBtn) replyBtn.dataset.msgText = decryptedText;
+    }
+}
+
+const editModalSave   = document.getElementById("edit-modal-save");
+const editModalCancel = document.getElementById("edit-modal-cancel");
+
+if (editModalCancel) {
+    editModalCancel.addEventListener("click", () => {
+        const overlay = document.getElementById("edit-modal-overlay");
+        if (overlay) overlay.classList.add("hidden");
+        currentEditingMsgId = null;
+    });
+}
+
+if (editModalSave) {
+    editModalSave.addEventListener("click", async () => {
+        const overlay = document.getElementById("edit-modal-overlay");
+        const inputEl = document.getElementById("edit-msg-input");
+        if (!currentEditingMsgId || !inputEl) return;
+
+        const updatedText = inputEl.value.trim();
+        if (!updatedText) return;
+
+        const msgData = messageCache.get(currentEditingMsgId);
+        if (msgData) {
+            const createdTs = msgData.created_at_ts || (Date.now() / 1000);
+            if ((Date.now() / 1000) - createdTs > 300) {
+                if (overlay) overlay.classList.add("hidden");
+                showInAppAlert("EDIT EXPIRED", "This message is older than 5 minutes and can no longer be edited.");
+                return;
+            }
+        }
+
+        editModalSave.disabled = true;
+        editModalSave.textContent = "SAVING...";
+
+        try {
+            const { ciphertext, iv } = await encryptMessage(updatedText);
+            const signature = await signMaterial(ciphertext + iv);
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type:       "edit_message",
+                    msg_id:     currentEditingMsgId,
+                    ciphertext: ciphertext,
+                    iv:         iv,
+                    signature:  signature,
+                    public_key: myPublicKeyJwk,
+                }));
+            }
+
+            if (overlay) overlay.classList.add("hidden");
+
+            handleIncomingEditedMessage({
+                msg_id:     currentEditingMsgId,
+                username:   currentUsername,
+                ciphertext: ciphertext,
+                iv:         iv,
+                signature:  signature,
+                public_key: myPublicKeyJwk,
+                sig_valid:  true,
+                is_edited:  true,
+            });
+
+
+        } catch (err) {
+            console.error("Failed to save edits:", err);
+            showInAppAlert("EDIT ERROR", "Failed to encrypt and save message edits.");
+        } finally {
+            editModalSave.disabled = false;
+            editModalSave.textContent = "SAVE EDITS ►";
+            currentEditingMsgId = null;
+        }
+    });
+}
 
 function showInAppConfirm({ title, text, confirmText, confirmClass, onConfirm }) {
     const overlay     = document.getElementById("confirm-modal-overlay");

@@ -487,9 +487,26 @@
         </div>
     </div>
 
+    <!-- In-App Retro Edit Message Modal -->
+    <div class="confirm-modal-overlay hidden" id="edit-modal-overlay">
+        <div class="confirm-modal-box">
+            <div class="confirm-modal-header">✏️ EDIT MESSAGE </div>
+            <div class="confirm-modal-divider"></div>
+            <div class="edit-modal-body">
+                <textarea class="edit-msg-textarea" id="edit-msg-input" rows="4" placeholder="Enter updated message..."></textarea>
+                <div class="edit-modal-hint">Messages can only be edited within 5 minutes of sending.</div>
+            </div>
+            <div class="confirm-modal-actions">
+                <button class="pixel-btn btn-sm btn-secondary" id="edit-modal-cancel">CANCEL</button>
+                <button class="pixel-btn btn-sm btn-warning" id="edit-modal-save">SAVE EDITS ►</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/config.js"></script>
     <script src="/static/app.js?v=4"></script>
 </body>
+
 
 
 </html>
