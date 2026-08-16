@@ -1478,7 +1478,7 @@ async function startVoiceRecording() {
             reader.onloadend = async () => {
                 const audioDataUrl = reader.result;
                 const voicePayload = JSON.stringify({ type: "voice_memo", mime: mime, audio: audioDataUrl });
-                const msgId = generateUuid();
+                const msgId = crypto.randomUUID ? crypto.randomUUID() : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
                 // 1. Encrypt voice payload with AES-GCM
                 const { ciphertext, iv } = await encryptMessage(voicePayload);
@@ -1498,11 +1498,11 @@ async function startVoiceRecording() {
                         client_msg_id: msgId,
                         attachment:    { type: "voice_memo" },
                         reply_to:      replyToMsgId || null,
-                        target_user:   targetUser,
+                        target_user:   null,  // voice memos are always room broadcasts
                     }));
 
                     playSound("message");
-                    addOwnMessageOptimistic("", msgId, { type: "voice_memo", audio: audioDataUrl }, replyToMsgId, targetUser);
+                    addOwnMessageOptimistic("", msgId, { type: "voice_memo", audio: audioDataUrl }, replyToMsgId, null);
                     clearReply();
                     incrementMessageCount();
                 }
