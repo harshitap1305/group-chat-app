@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS messages (
     is_deleted    INTEGER NOT NULL DEFAULT 0,   -- 1=tombstone (unsent/deleted)
     target_user   TEXT    DEFAULT NULL,          -- non-null = whisper to this username
     is_edited     INTEGER NOT NULL DEFAULT 0,   -- 1=edited message
-    created_at_ts REAL    DEFAULT NULL           -- unix epoch timestamp for edit window validation
+    created_at_ts REAL    DEFAULT NULL,          -- unix epoch timestamp for edit window validation
+    attachment    TEXT    DEFAULT NULL           -- JSON string of attachment data
 );
 
 CREATE TABLE IF NOT EXISTS user_keys (
@@ -103,6 +104,9 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     if "created_at_ts" not in columns:
         conn.execute("ALTER TABLE messages ADD COLUMN created_at_ts REAL DEFAULT NULL")
         print("[DB] Migration: added created_at_ts column to messages")
+    if "attachment" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN attachment TEXT DEFAULT NULL")
+        print("[DB] Migration: added attachment column to messages")
 
     cursor = conn.execute("PRAGMA table_info(rooms)")
     columns = {row[1] for row in cursor.fetchall()}
@@ -234,6 +238,7 @@ def save_message(
     msg_id: str = "",
     reply_to: str | None = None,
     target_user: str | None = None,
+    attachment: str | None = None,
 ) -> int:
     """
     Persist an encrypted, signed message to the DB.
@@ -250,8 +255,8 @@ def save_message(
             """
             INSERT INTO messages
                 (room_id, msg_id, username, avatar, ciphertext, iv, signature, public_key,
-                 timestamp, hmac_digest, sig_valid, reply_to, target_user, is_edited, created_at_ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                 timestamp, hmac_digest, sig_valid, reply_to, target_user, is_edited, created_at_ts, attachment)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
             """,
             (
                 room_id,
@@ -268,6 +273,7 @@ def save_message(
                 reply_to,
                 target_user,
                 created_at_ts,
+                attachment,
             ),
         )
         return cur.lastrowid
@@ -283,7 +289,7 @@ def get_history(room_id: str, limit: int | None = None, username: str | None = N
     sql = """
         SELECT msg_id, username, avatar, ciphertext, iv, signature, public_key,
                timestamp, hmac_digest, sig_valid, reply_to, is_deleted, target_user,
-               is_edited, created_at_ts
+               is_edited, created_at_ts, attachment
         FROM messages
         WHERE room_id = ?
         ORDER BY id DESC
@@ -323,6 +329,7 @@ def get_history(room_id: str, limit: int | None = None, username: str | None = N
                 "target_user": row["target_user"],
                 "is_edited": bool(row["is_edited"]),
                 "created_at_ts": row["created_at_ts"],
+                "attachment": json.loads(row["attachment"]) if row["attachment"] else None,
             }
         )
     return messages
