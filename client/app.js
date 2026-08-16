@@ -417,8 +417,10 @@ const roomSearchInput      = document.getElementById("room-search-input");
 const refreshRoomsBtn      = document.getElementById("refresh-rooms-btn");
 
 function switchTab(tab) {
-    loginError.textContent = "";
+    if (loginErrorTimer) { clearTimeout(loginErrorTimer); loginErrorTimer = null; }
+    if (loginError) loginError.textContent = "";
     if (tab === "register") {
+
         tabRegister.classList.add("active");
         tabLogin.classList.remove("active");
         panelRegister.classList.remove("hidden");
@@ -902,11 +904,30 @@ function updateConnectionStatus(status) {
     statusText.textContent = labels[status] || status.toUpperCase();
 }
 
+let loginErrorTimer = null;
+
 function showLoginError(message) {
-    loginError.textContent = "! " + message.toUpperCase();
-    joinBtn.disabled = false;
-    joinBtnText.textContent = "► START QUEST";
+    if (loginErrorTimer) {
+        clearTimeout(loginErrorTimer);
+        loginErrorTimer = null;
+    }
+
+    if (loginError) {
+        loginError.textContent = "! " + message.toUpperCase();
+    }
+
+    // Re-enable auth buttons & restore button text
+    if (registerBtn) { registerBtn.disabled = false; if (registerBtnText) registerBtnText.textContent = "► CREATE ACCOUNT"; }
+    if (loginBtn)    { loginBtn.disabled = false;    if (loginBtnText)    loginBtnText.textContent    = "► LOGIN"; }
+    if (joinBtn)     { joinBtn.disabled = false;     if (joinBtnText)     joinBtnText.textContent     = "► START QUEST"; }
+
+    // Auto-revert error message after 5 seconds
+    loginErrorTimer = setTimeout(() => {
+        if (loginError) loginError.textContent = "";
+        loginErrorTimer = null;
+    }, 5000);
 }
+
 
 function showChatScreen() {
     loginScreen.classList.add("hidden");
