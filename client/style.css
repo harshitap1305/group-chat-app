@@ -2018,6 +2018,54 @@ body {
     letter-spacing: 1px;
 }
 
+/* ── Lobby XP chip ─────────────────────────────────────────── */
+.lobby-xp-chip {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--bg1);
+    border: 3px solid var(--bg5);
+    box-shadow: 3px 3px 0 var(--bg0);
+    padding: 6px 12px;
+    min-width: 130px;
+}
+
+.lobby-xp-chip-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.lobby-xp-rank {
+    font-family: var(--font-pixel);
+    font-size: 7px;
+    color: var(--sage);
+    letter-spacing: 1px;
+}
+
+.lobby-xp-nums {
+    font-family: var(--font-readable);
+    font-size: 14px;
+    color: var(--t-ivory);
+    letter-spacing: 1px;
+    white-space: nowrap;
+}
+
+.lobby-xp-bar-track {
+    height: 5px;
+    background: var(--bg3);
+    border: 1px solid var(--bg5);
+    overflow: hidden;
+}
+
+.lobby-xp-bar-fill {
+    height: 100%;
+    background: var(--sage);
+    transition: width 0.3s steps(6);
+    box-shadow: 2px 0 0 rgba(255,255,255,0.2) inset;
+}
+
 .lobby-logout-btn {
     font-family: var(--font-pixel);
     font-size: 8px;

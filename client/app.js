@@ -1902,6 +1902,19 @@ function showLobbyScreen() {
     chatScreen.classList.add("hidden");
     lobbyScreen.classList.remove("hidden");
     if (lobbyUsernameDisplay) lobbyUsernameDisplay.textContent = `▸ ${currentUsername.toUpperCase()}`;
+    // Populate lobby XP chip
+    const rank = getCurrentRank();
+    const lobbyRankEl  = document.getElementById("lobby-xp-rank");
+    const lobbyXpNums  = document.getElementById("lobby-xp-nums");
+    const lobbyXpBar   = document.getElementById("lobby-xp-bar-fill");
+    if (lobbyRankEl)  lobbyRankEl.textContent  = rank.name;
+    if (lobbyXpNums)  lobbyXpNums.textContent  = `${totalXP} XP`;
+    if (lobbyXpBar) {
+        const xpInLevel = totalXP - rank.xp;
+        const xpNeeded  = rank.next - rank.xp;
+        const pct = rank.level === 6 ? 100 : Math.min(100, (xpInLevel / xpNeeded) * 100);
+        lobbyXpBar.style.width = `${pct.toFixed(1)}%`;
+    }
     resetLobbyButtons();
     loadRooms();
     if (roomPollTimer) clearInterval(roomPollTimer);
