@@ -1842,11 +1842,23 @@ function leaveChat() {
 
 // ── Lobby Logic ────────────────────────────────────────────────────────────────
 
+function resetLobbyButtons() {
+    if (createRoomBtn) {
+        createRoomBtn.disabled = false;
+        if (createRoomBtnText) createRoomBtnText.textContent = "✦ CREATE ROOM";
+    }
+    if (joinCodeBtn) {
+        joinCodeBtn.disabled = false;
+        if (joinCodeBtnText) joinCodeBtnText.textContent = "⌖ JOIN ROOM";
+    }
+}
+
 function showLobbyScreen() {
     loginScreen.classList.add("hidden");
     chatScreen.classList.add("hidden");
     lobbyScreen.classList.remove("hidden");
     if (lobbyUsernameDisplay) lobbyUsernameDisplay.textContent = `▸ ${currentUsername.toUpperCase()}`;
+    resetLobbyButtons();
     loadRooms();
     if (roomPollTimer) clearInterval(roomPollTimer);
     roomPollTimer = setInterval(loadRooms, 6000);
@@ -1957,8 +1969,8 @@ async function createRoomAction() {
         await joinRoom(data.room_id, data.name);
     } catch (err) {
         if (lobbyError) lobbyError.textContent = "! " + err.message.toUpperCase();
-        createRoomBtn.disabled = false;
-        createRoomBtnText.textContent = "✦ CREATE ROOM";
+    } finally {
+        resetLobbyButtons();
     }
 }
 
@@ -1978,8 +1990,8 @@ async function joinRoomByCode() {
         await joinRoom(data.id, data.name);
     } catch (err) {
         if (joinCodeError) joinCodeError.textContent = "! " + err.message.toUpperCase();
-        joinCodeBtn.disabled = false;
-        joinCodeBtnText.textContent = "⌖ JOIN ROOM";
+    } finally {
+        resetLobbyButtons();
     }
 }
 
