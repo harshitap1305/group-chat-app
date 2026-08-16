@@ -8,20 +8,29 @@ A **real-time, gamified group chat** built with **FastAPI WebSockets** (Python) 
 
 - ✅ Real-time message broadcasting via WebSockets
 - ✅ User join/leave notifications with sound effects (Mario-inspired)
+- ✅ **User Authentication** — Secure login/signup system with password validation and database persistence
+- ✅ **End-to-End Encryption (E2E)** — Messages, files, media, and voice memos are fully encrypted (Web Crypto API) with signature verification and tamper detection logs
 - ✅ Unique usernames — duplicates are rejected server-side
+- ✅ **Multi-Room Chat** — Create public/private rooms, join via 6-character unique codes, and view active public rooms in the lobby
 - ✅ **Avatar picker** — 12 pre-built pixel avatars (Wizard, Robot, Ninja, Astronaut, Dragon, and more)
-- ✅ **Gamification system** — XP, ranks (Newbie → Legend), message streaks, and level-up toasts
+- ✅ **Gamification system** — XP, ranks (Newbie → Legend), message streaks, unlockable badges, and level-up toasts
+- ✅ **Interactive Feature Guide** — 5-tile grid dashboard showcasing XP, ranks, badges, and chat mechanics
 - ✅ **Message receipt indicators** — 😴 Sent · 😃 Partial · 😎 Delivered to all
 - ✅ **Optimistic UI** — own messages appear instantly before server confirmation
 - ✅ **File & media attachments** — images (inline preview), video, audio, PDFs, and generic files
+- ✅ **Voice Memos** — Record and send in-app audio messages seamlessly
+- ✅ **Message Management** — Edit your sent messages or delete them permanently
+- ✅ **Whispers & Mentions** — Send private messages using `/w @username`, and tag users to highlight and play a mention sound
+- ✅ **Threaded Replies** — Reply directly to specific messages for clear conversations
 - ✅ **Typing indicator** — shows when another player is typing (with auto-timeout)
 - ✅ **Emoji picker** — quick-react panel with 28 emojis
-- ✅ **Message history** — last 50 messages replayed for new joiners; auto-cleared 60 s after the room empties
-- ✅ **Live online sidebar** — sorted player list with avatars and XP stats
+- ✅ **Message history** — last 50 messages replayed for new joiners; auto-cleared 60 s after the room empties (with manual clear/delete options for room owners)
+- ✅ **Live online sidebar** — sorted player list with avatars, XP stats, and earned badges
 - ✅ Connection status indicator (Online / Offline / Reconnecting)
 - ✅ Auto-reconnect with exponential backoff
+- ✅ **Multi-tab Persistence** — Sessions are synchronized, allowing seamless operation across multiple browser tabs
 - ✅ Info modal explaining receipt emojis
-- ✅ Leave button — returns user to the login screen cleanly
+- ✅ Leave button — returns user to the lobby screen cleanly
 - ✅ Scanline overlay and retro pixel background
 
 ---
@@ -121,6 +130,8 @@ The server starts on:
 - **WebSocket**: `ws://0.0.0.0:5000/ws`
 - **File upload**: `POST http://0.0.0.0:5000/upload`
 - **Uploaded files**: `http://0.0.0.0:5000/uploads/<filename>`
+- **Room Management APIs**: `GET /rooms`, `POST /rooms`
+- **Authentication APIs**: `POST /login`, `POST /register`
 
 ### 4. Start the Frontend (Terminal 2)
 
@@ -161,9 +172,10 @@ The client automatically connects to `ws://localhost:5000/ws` using `window.loca
 │  │  Frontend Server    │   │  Backend Server (FastAPI)    │  │
 │  │  client/serve.py    │   │  server/server.py            │  │
 │  │  http://0.0.0.0:3000│   │  ws://0.0.0.0:5000/ws        │  │
-│  │                     │   │  POST /upload                │  │
-│  │  Serves:            │   │  GET  /uploads/<file>        │  │
-│  │  index.html         │   │                              │  │
+│  │                     │   │  GET / POST /rooms           │  │
+│  │  Serves:            │   │  POST /login, /register      │  │
+│  │  index.html         │   │  POST /upload                │  │
+│  │  style.css          │   │  GET  /uploads/<file>        │  │
 │  │  style.css          │   │  ConnectionManager:          │  │
 │  │  app.js             │   │  ├─ broadcast()              │  │
 │  │  sounds/            │   │  ├─ add / remove()           │  │
@@ -190,6 +202,7 @@ The client automatically connects to `ws://localhost:5000/ws` using `window.loca
 | **XP**        | +2 per message sent · +5 on seeing someone join · +1/min passive |
 | **Streak**    | Increments every message; every 5th streak grants +10 XP |
 | **Ranks**     | Newbie (0) → Squire (50) → Knight (150) → Champion (320) → Warlord (600) → Legend (1000) |
+| **Badges**    | Earned visual badges displayed in the sidebar alongside ranks |
 | **Level-up**  | Animated toast + 8-bit ascending chime                   |
 | **Stats**     | Messages sent, current streak, session time (all shown in sidebar) |
 
@@ -230,8 +243,8 @@ All messages are JSON with a `type` field.
 
 | Type      | Fields                                      | Description                        |
 |-----------|---------------------------------------------|------------------------------------|
-| `join`    | `username`, `avatar`                        | Register with a username & avatar  |
-| `message` | `text`, `client_msg_id`, `attachment`       | Send a chat message (+ optional file) |
+| `join`    | `token`, `public_key`, `room_id`            | Authenticate and join a chat room  |
+| `message` | `ciphertext`, `iv`, `signature`, `client_msg_id`, `attachment` | Send an encrypted chat message |
 | `typing`  | —                                           | Signal that the user is typing     |
 
 ### Server → Client
@@ -241,7 +254,7 @@ All messages are JSON with a `type` field.
 | `system`      | `message`, `timestamp`                            | System notification (e.g. welcome)   |
 | `join`        | `username`, `avatar`, `message`, `timestamp`      | User joined                          |
 | `leave`       | `username`, `message`, `timestamp`                | User left                            |
-| `message`     | `username`, `avatar`, `text`, `attachment`, `timestamp` | Broadcast chat message         |
+| `message`     | `username`, `avatar`, `ciphertext`, `iv`, `signature`, `public_key`, `attachment`, `timestamp` | Broadcast encrypted chat message         |
 | `receipt`     | `msg_id`, `status`                                | Delivery confirmation for a sent message |
 | `userList`    | `users` (list of `{username, avatar}`)            | Current online players               |
 | `history`     | `messages`                                        | Last ≤50 messages for new joiners    |
