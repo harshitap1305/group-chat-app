@@ -232,6 +232,11 @@ app.add_middleware(
 FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 3000))
 CLEANUP_TIMEOUT = int(os.environ.get("CLEANUP_TIMEOUT", 300))
 
+@app.get("/health")
+async def health_check():
+    """Lightweight endpoint used by the frontend to detect if the SSL cert is accepted."""
+    return {"status": "ok"}
+
 # ── Session store ──────────────────────────────────────────────────────────
 # Maps one-time token → { username, avatar }
 # Tokens are issued by /register and /login, consumed once by the WebSocket join.
@@ -634,6 +639,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         msg_id      = client_msg_id,
                         reply_to    = reply_to,
                         target_user = target_user,
+                        attachment  = json.dumps(attachment) if attachment else None,
                     )
 
                 # ── Build outbound message ─────────────────────────────────
