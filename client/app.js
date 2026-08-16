@@ -129,12 +129,12 @@ function renderRoomAvatarPicker() {
 
 // ── Ranks ─────────────────────────────────────────────────────────────────────
 const RANKS = [
-    { level:1, xp:0,     name:"NEWBIE",   next:200   },
-    { level:2, xp:200,   name:"SQUIRE",   next:600   },
-    { level:3, xp:600,   name:"KNIGHT",   next:1500  },
-    { level:4, xp:1500,  name:"CHAMPION", next:4000  },
-    { level:5, xp:4000,  name:"WARLORD",  next:10000 },
-    { level:6, xp:10000, name:"LEGEND",   next:10000 },
+    { level:1, xp:0,     name:"NEWBIE",   emoji:"🌱", next:200   },
+    { level:2, xp:200,   name:"SQUIRE",   emoji:"🗡️", next:600   },
+    { level:3, xp:600,   name:"KNIGHT",   emoji:"🛡️", next:1500  },
+    { level:4, xp:1500,  name:"CHAMPION", emoji:"🏆", next:4000  },
+    { level:5, xp:4000,  name:"WARLORD",  emoji:"👑", next:10000 },
+    { level:6, xp:10000, name:"LEGEND",   emoji:"⭐", next:10000 },
 ];
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -1093,7 +1093,7 @@ function updateXPBar() {
     const pct       = rank.level === 6 ? 100 : Math.min(100, (xpInLevel / xpNeeded) * 100);
     if (xpBarFill) xpBarFill.style.width = `${pct.toFixed(1)}%`;
     if (xpValue)   xpValue.textContent   = `${totalXP} / ${rank.next}`;
-    if (rankNameEl) rankNameEl.textContent = rank.name;
+    if (rankNameEl) rankNameEl.textContent = `${rank.emoji} ${rank.name}`;
 }
 
 function getCurrentRank() {
@@ -1106,7 +1106,7 @@ function checkLevelUp() {
     const rank = getCurrentRank();
     if (rank.level > currentLevel) {
         currentLevel = rank.level;
-        if (levelupSub) levelupSub.textContent = `NEW RANK: ${rank.name}`;
+        if (levelupSub) levelupSub.textContent = `${rank.emoji} NEW RANK: ${rank.name}`;
         levelupToast.classList.add("show");
         playLevelUpSound();
         setTimeout(() => levelupToast.classList.remove("show"), 3500);
@@ -1552,15 +1552,22 @@ document.addEventListener("click", (e) => {
 window.addEventListener("focus", () => { isTabFocused = true;  });
 window.addEventListener("blur",  () => { isTabFocused = false; });
 
-// ── Info modal ────────────────────────────────────────────────────────────────
-infoBtn.addEventListener("click", () => infoModalOverlay.classList.remove("hidden"));
-infoModalClose.addEventListener("click", () => infoModalOverlay.classList.add("hidden"));
+// ── Info / Feature Guide modal ────────────────────────────────────────────────
+function openInfoModal() { infoModalOverlay.classList.remove("hidden"); }
+function closeInfoModal() { infoModalOverlay.classList.add("hidden"); }
+
+infoBtn.addEventListener("click", openInfoModal);
+// Lobby help button (available before joining a room)
+const lobbyHelpBtn = document.getElementById("lobby-help-btn");
+if (lobbyHelpBtn) lobbyHelpBtn.addEventListener("click", openInfoModal);
+
+infoModalClose.addEventListener("click", closeInfoModal);
 infoModalOverlay.addEventListener("click", (e) => {
-    if (e.target === infoModalOverlay) infoModalOverlay.classList.add("hidden");
+    if (e.target === infoModalOverlay) closeInfoModal();
 });
 document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
-        infoModalOverlay.classList.add("hidden");
+        closeInfoModal();
         clearReply();
     }
 });
@@ -1907,7 +1914,7 @@ function showLobbyScreen() {
     const lobbyRankEl  = document.getElementById("lobby-xp-rank");
     const lobbyXpNums  = document.getElementById("lobby-xp-nums");
     const lobbyXpBar   = document.getElementById("lobby-xp-bar-fill");
-    if (lobbyRankEl)  lobbyRankEl.textContent  = rank.name;
+    if (lobbyRankEl)  lobbyRankEl.textContent  = `${rank.emoji} ${rank.name}`;
     if (lobbyXpNums)  lobbyXpNums.textContent  = `${totalXP} XP`;
     if (lobbyXpBar) {
         const xpInLevel = totalXP - rank.xp;

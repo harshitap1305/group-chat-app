@@ -151,6 +151,7 @@
                             <div class="lobby-xp-bar-fill" id="lobby-xp-bar-fill" style="width:0%"></div>
                         </div>
                     </div>
+                    <button class="lobby-help-btn" id="lobby-help-btn" title="Feature guide &amp; help">ⓘ HELP</button>
                     <button class="lobby-logout-btn" id="lobby-logout-btn" title="Back to login">✕ LOGOUT</button>
                 </div>
             </div>
@@ -447,63 +448,92 @@
     <!-- XP gain floating toasts -->
     <div id="xp-toast-container" class="xp-toast-container"></div>
 
-    <!-- Security & Receipt info modal -->
+    <!-- Feature Guide Modal -->
     <div class="info-modal-overlay hidden" id="info-modal-overlay">
-        <div class="info-modal">
-            <div class="info-modal-title">▸ SECURITY &amp; RECEIPTS</div>
+        <div class="info-modal info-modal--tiled">
+
+            <div class="info-modal-header-row">
+                <div class="info-modal-title">[ PIXELCHAT — FEATURE GUIDE ]</div>
+                <button class="info-modal-x" id="info-modal-close" title="Close">✕</button>
+            </div>
             <div class="info-modal-divider"></div>
 
-            <div class="info-modal-section-title">🔐 SECURITY BADGES</div>
-            <ul class="info-modal-list">
-                <li>
-                    <span class="info-emoji">🔒 ✓</span>
-                    <div class="info-desc">
-                        <span class="info-label">VERIFIED</span>
-                        <span class="info-sub">Message was decrypted (AES-GCM) and the sender's ECDSA-P256 signature is valid.</span>
-                    </div>
-                </li>
-                <li>
-                    <span class="info-emoji">⚠</span>
-                    <div class="info-desc">
-                        <span class="info-label">SIG INVALID</span>
-                        <span class="info-sub">Signature could not be verified. The message may have been altered in transit.</span>
-                    </div>
-                </li>
-                <li>
-                    <span class="info-emoji">🚨</span>
-                    <div class="info-desc">
-                        <span class="info-label">TAMPERED</span>
-                        <span class="info-sub">Server HMAC check failed — this stored message was modified in the database!</span>
-                    </div>
-                </li>
-            </ul>
+            <div class="info-tiles-grid">
 
-            <div class="info-modal-divider"></div>
-            <div class="info-modal-section-title">📬 DELIVERY RECEIPTS</div>
-            <ul class="info-modal-list">
-                <li>
-                    <span class="info-emoji">😴</span>
-                    <div class="info-desc">
-                        <span class="info-label">SENT</span>
-                        <span class="info-sub">Message reached the server. No other players online.</span>
+                <!-- Row 1: Mentions & Whispers — full width, horizontal inner layout -->
+                <div class="info-tile info-tile--full info-tile--horiz">
+                    <div class="info-tile-col">
+                        <div class="info-tile-title">💬 MENTIONS &amp; WHISPERS</div>
+                        <div class="info-tile-row">
+                            <span class="info-tile-icon">@</span>
+                            <div>
+                                <div class="info-tile-label">@MENTION</div>
+                                <div class="info-tile-sub">Type <code class="info-code">@username</code> to ping a player. Their bubble glows and they hear a sound.</div>
+                            </div>
+                        </div>
                     </div>
-                </li>
-                <li>
-                    <span class="info-emoji">😃</span>
-                    <div class="info-desc">
-                        <span class="info-label">PARTIAL</span>
-                        <span class="info-sub">Some players received it, but not all.</span>
+                    <div class="info-tile-col-divider"></div>
+                    <div class="info-tile-col">
+                        <div class="info-tile-title">🔮 WHISPER</div>
+                        <div class="info-tile-row">
+                            <span class="info-tile-icon">🔮</span>
+                            <div>
+                                <div class="info-tile-label">PRIVATE MESSAGE</div>
+                                <div class="info-tile-sub">Select a player from the list to send a private E2E-encrypted message only they can see.</div>
+                            </div>
+                        </div>
                     </div>
-                </li>
-                <li>
-                    <span class="info-emoji">😎</span>
-                    <div class="info-desc">
-                        <span class="info-label">DELIVERED</span>
-                        <span class="info-sub">All players in the room received your message.</span>
+                </div>
+
+                <!-- Row 2 left: XP Sources -->
+                <div class="info-tile">
+                    <div class="info-tile-title">⚔️ HOW TO EARN XP</div>
+                    <div class="info-xp-earn-table">
+                        <div class="info-xp-earn-row"><span>✉️ Send a message</span><span>+10</span></div>
+                        <div class="info-xp-earn-row"><span>📥 Receive a message</span><span>+2</span></div>
+                        <div class="info-xp-earn-row"><span>🔥 Every 10th msg (streak)</span><span>+25</span></div>
+                        <div class="info-xp-earn-row"><span>🏰 Create a room</span><span>+20</span></div>
+                        <div class="info-xp-earn-row"><span>🚪 Someone joins</span><span>+3</span></div>
+                        <div class="info-xp-earn-row"><span>⏱ Per minute in room</span><span>+5</span></div>
                     </div>
-                </li>
-            </ul>
-            <button class="info-modal-close" id="info-modal-close">[ CLOSE ]</button>
+                </div>
+
+                <!-- Row 2 right: Rank Progression -->
+                <div class="info-tile">
+                    <div class="info-tile-title">📊 RANK PROGRESSION</div>
+                    <div class="info-rank-table">
+                        <div class="info-rank-row header"><span></span><span>RANK</span><span>XP</span></div>
+                        <div class="info-rank-row"><span>🌱</span><span>NEWBIE</span><span>0</span></div>
+                        <div class="info-rank-row"><span>🗡️</span><span>SQUIRE</span><span>200</span></div>
+                        <div class="info-rank-row"><span>🛡️</span><span>KNIGHT</span><span>600</span></div>
+                        <div class="info-rank-row"><span>🏆</span><span>CHAMPION</span><span>1,500</span></div>
+                        <div class="info-rank-row"><span>👑</span><span>WARLORD</span><span>4,000</span></div>
+                        <div class="info-rank-row legend"><span>⭐</span><span>LEGEND</span><span>10,000</span></div>
+                    </div>
+                    <p class="info-note">XP persists across sessions &amp; rooms.</p>
+                </div>
+
+                <!-- Row 3 left: Security Badges -->
+                <div class="info-tile">
+                    <div class="info-tile-title">🔐 SECURITY BADGES</div>
+                    <div class="info-tile-mini-list">
+                        <div class="info-tile-mini-row"><span>🔒✓</span><div><span class="info-tile-label">VERIFIED</span> — AES-GCM decrypted, ECDSA sig valid.</div></div>
+                        <div class="info-tile-mini-row"><span>⚠</span><div><span class="info-tile-label">SIG INVALID</span> — Could not verify sender.</div></div>
+                        <div class="info-tile-mini-row"><span>🚨</span><div><span class="info-tile-label">TAMPERED</span> — DB message was modified.</div></div>
+                    </div>
+                </div>
+
+                <!-- Row 3 right: Delivery Receipts -->
+                <div class="info-tile">
+                    <div class="info-tile-title">📬 DELIVERY RECEIPTS</div>
+                    <div class="info-tile-mini-list">
+                        <div class="info-tile-mini-row"><span>😴</span><div><span class="info-tile-label">SENT</span> — Reached server, no one else online.</div></div>
+                        <div class="info-tile-mini-row"><span>😃</span><div><span class="info-tile-label">PARTIAL</span> — Some players received it.</div></div>
+                        <div class="info-tile-mini-row"><span>😎</span><div><span class="info-tile-label">DELIVERED</span> — Everyone in room got it.</div></div>
+                    </div>
+                </div>
+
+            </div><!-- /.info-tiles-grid -->
         </div>
     </div>
 
