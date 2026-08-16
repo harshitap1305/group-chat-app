@@ -279,10 +279,10 @@ async def startup():
 
 @app.get("/config.js")
 async def config_js():
-    backend_port = int(os.environ.get("BACKEND_PORT", 8000))
+    backend_port = int(os.environ.get("PORT", 8000))
     from fastapi.responses import Response
     return Response(
-        content=f"window.BACKEND_PORT = {backend_port};",
+        content=f"window.PORT = {backend_port};",
         media_type="application/javascript"
     )
 
@@ -919,7 +919,7 @@ async def websocket_endpoint(websocket: WebSocket):
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.environ.get("BACKEND_PORT", 5000))
+    port = int(os.environ.get("PORT", 5000))
 
     print("=" * 50)
     print("  Secure Group Chat Server (Multi-Room)")
