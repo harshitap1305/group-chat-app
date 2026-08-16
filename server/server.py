@@ -628,6 +628,9 @@ async def websocket_endpoint(websocket: WebSocket):
         # Send DB-backed history to the new joiner (unlimited history)
         history = db.get_history(room_id=room_id, limit=None, username=username)
         if history:
+            for msg in history:
+                if not msg.get("sig_valid", True):
+                    print(f"\033[91m[SECURITY ALERT] ⚠️ Tampered message detected in DB history! Room: '{room_id}' | Sender: '{msg.get('username')}' | Msg ID: '{msg.get('msg_id')}'\033[0m")
             await websocket.send_json({
                 "type":     "history",
                 "messages": history,
@@ -657,7 +660,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 sig_valid = verify_ecdsa_signature(signed_material, signature, sender_key)
 
                 if not sig_valid:
-                    print(f"[!] Invalid signature from {username} in room '{room_id}'")
+                    print(f"\033[91m[SECURITY ALERT] 🚨 INVALID / TAMPERED SIGNATURE! Sender: '{username}' | Room: '{room_id}' | Signature verification failed!\033[0m")
 
                 # ── Persist to DB ─────────────────────────────────────────
                 if ciphertext:
@@ -794,6 +797,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 if edit_msg_id and ciphertext and iv and signature:
                     signed_material = (ciphertext + iv).encode("utf-8")
                     sig_valid = verify_ecdsa_signature(signed_material, signature, sender_key)
+
+                    if not sig_valid:
+                        print(f"\033[91m[SECURITY ALERT] 🚨 INVALID / TAMPERED EDIT SIGNATURE! Sender: '{username}' | Room: '{room_id}' | Msg ID: '{edit_msg_id}'\033[0m")
 
                     success, err_msg = db.edit_message(
                         msg_id     = edit_msg_id,
